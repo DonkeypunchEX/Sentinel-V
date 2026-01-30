@@ -1,0 +1,38 @@
+# 1. Create the repository structure
+mkdir sentinel-v-cyber-defense
+cd sentinel-v-cyber-defense
+
+# 2. Initialize git
+git init
+
+# 3. Create all the directories
+mkdir -p .github/workflows .github/ISSUE_TEMPLATE
+mkdir -p sentinel_v tests examples docs config scripts
+
+# 4. Add all the files from above to their respective locations
+
+# 5. Make scripts executable
+chmod +x scripts/*.sh
+
+# 6. Initialize virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 7. Install in development mode
+pip install -e ".[dev]"
+
+# 8. Run tests
+make test
+
+# 9. Create initial commit
+git add .
+git commit -m "Initial commit: Sentinel-V Cyber Defense Framework"
+
+# 10. Add remote and push
+git remote add origin https://github.com/yourusername/sentinel-v-cyber-defense.git
+git branch -M main
+git push -u origin main
+
+# 11. Create a release
+git tag -a v1.0.0 -m "Initial release"
+git push origin v1.0.0
