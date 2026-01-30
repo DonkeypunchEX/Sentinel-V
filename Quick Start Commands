@@ -1,0 +1,10 @@
+# Clone and install
+git clone https://github.com/yourusername/sentinel-v-cyber-defense.git
+cd sentinel-v-cyber-defense
+./scripts/deploy.sh install
+./scripts/deploy.sh start
+
+# Or use make
+make install
+make test
+sentinel-v start
