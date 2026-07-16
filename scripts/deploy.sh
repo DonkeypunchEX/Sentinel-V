@@ -26,13 +26,14 @@ check_prerequisites() {
     
     # Check Python version
     if ! command -v python3 &> /dev/null; then
-        log_error "Python3 not found. Please install Python 3.8 or higher."
+        log_error "Python3 not found. Please install Python 3.10 or higher."
         exit 1
     fi
     
     PYTHON_VERSION=$(python3 --version | awk '{print $2}')
-    if [[ $(echo "$PYTHON_VERSION 3.8" | awk '{print ($1 < $2)}') -eq 1 ]]; then
-        log_error "Python 3.8 or higher required. Found: $PYTHON_VERSION"
+    # tuple comparison — string/awk float compares treat 3.10 as 3.1
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+        log_error "Python 3.10 or higher required. Found: $PYTHON_VERSION"
         exit 1
     fi
     
@@ -50,16 +51,8 @@ install_dependencies() {
     # Upgrade pip
     python3 -m pip install --upgrade pip
     
-    # Install requirements
-    if [[ -f "requirements.txt" ]]; then
-        python3 -m pip install -r requirements.txt
-    else
-        log_error "requirements.txt not found"
-        exit 1
-    fi
-    
-    # Install in development mode
-    python3 -m pip install -e .
+    # Install from pyproject metadata (dev tools + CLI extras)
+    python3 -m pip install -e ".[dev,cli]"
     
     log_info "Dependencies installed successfully"
 }

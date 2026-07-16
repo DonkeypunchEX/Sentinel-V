@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test lint format security clean docs build publish docker
+.PHONY: help install dev-install test coverage lint format security clean build publish docker docker-run version
 
 help:
 	@echo "Sentinel-V Cyber-Defense Framework"
@@ -12,7 +12,6 @@ help:
 	@echo "  make format      Format code with black"
 	@echo "  make security    Run security checks"
 	@echo "  make clean       Clean build artifacts"
-	@echo "  make docs        Build documentation"
 	@echo "  make build       Build package"
 	@echo "  make publish     Publish to PyPI (requires credentials)"
 	@echo "  make docker      Build Docker image"
@@ -30,17 +29,16 @@ coverage:
 	pytest tests/ --cov=sentinel_v --cov-report=html --cov-report=term
 
 lint:
-	flake8 sentinel_v/ tests/ examples/
-	mypy sentinel_v/
+	flake8 sentinel_v/ tests/ examples/ --max-line-length=88
+	mypy sentinel_v/ --ignore-missing-imports
 	bandit -r sentinel_v/
 
 format:
 	black sentinel_v/ tests/ examples/
-	isort sentinel_v/ tests/ examples/
 
 security:
-	safety check
 	bandit -r sentinel_v/
+	pip-audit --skip-editable
 
 clean:
 	rm -rf build/
@@ -52,9 +50,6 @@ clean:
 	rm -rf .mypy_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
-
-docs:
-	cd docs && make html
 
 build:
 	python -m build

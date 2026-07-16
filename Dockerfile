@@ -1,36 +1,25 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
+# Install the package from pyproject metadata (no requirements.txt)
+COPY pyproject.toml README.md ./
 COPY sentinel_v/ ./sentinel_v/
-COPY config/ ./config/
-COPY scripts/ ./scripts/
+RUN pip install --no-cache-dir --upgrade pip setuptools && \
+    pip install --no-cache-dir ".[cli]"
 
-# Create directories for logs and data
+# Default configuration (mount your own over /app/config to override)
+COPY config/ ./config/
+
 RUN mkdir -p /app/logs /app/data
 
-# Create non-root user
+# Non-root runtime user
 RUN useradd -m -u 1000 sentinel && \
     chown -R sentinel:sentinel /app
 USER sentinel
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(('localhost', 8080))" || exit 1
+# NOTE: `sentinel-v start` runs a foreground process and does not open
+# a network port, so there is no meaningful TCP healthcheck; container
+# exit is the failure signal.
 
-# Expose monitoring port
-EXPOSE 8080
-
-# Default command
-CMD ["python", "-m", "sentinel_v.cli", "start", "--config", "/app/config/sentinel.default.yaml"]
+CMD ["sentinel-v", "start", "--config", "/app/config/sentinel.default.yaml"]
