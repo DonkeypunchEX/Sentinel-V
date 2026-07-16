@@ -1,0 +1,14 @@
+services:
+  whse01:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - whse01-data:/data
+    restart: unless-stopped
+    environment:
+      # set to "1" when running behind a TLS reverse proxy (Caddy/nginx)
+      - WHSE_TRUST_PROXY=0
+
+volumes:
+  whse01-data:
