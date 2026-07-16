@@ -84,6 +84,29 @@ test("WHSE-01 API", async (t) => {
     assert.strictEqual(iss.by, "ADMIN");
   });
 
+  await t.test("receipt that would exceed MAX_QTY is rejected, not clamped", async () => {
+    await req("POST", "/api/count", { sku: "TRM-CAS-356", exact: 999998, ref: "OVERFLOW-SETUP" });
+    const r = await req("POST", "/api/receive", { sku: "TRM-CAS-356", qty: 5 });
+    assert.strictEqual(r.status, 409);
+    assert.match(r.json.error, /OVER MAX/);
+    assert.strictEqual((await req("POST", "/api/receive", { sku: "TRM-CAS-356", qty: 1 })).status, 200);
+    await req("POST", "/api/count", { sku: "TRM-CAS-356", exact: 145, ref: "OVERFLOW-RESET" });
+  });
+
+  await t.test("PATCH with partial body preserves omitted fields", async () => {
+    const before = (await req("GET", "/api/state")).json.items.find((i) => i.sku === "OSB-716");
+    const r = await req("PATCH", "/api/items/OSB-716", { desc: "7/16 OSB 4x8 (partial patch)" });
+    assert.strictEqual(r.status, 200);
+    const after = (await req("GET", "/api/state")).json.items.find((i) => i.sku === "OSB-716");
+    assert.strictEqual(after.desc, "7/16 OSB 4x8 (partial patch)");
+    assert.strictEqual(after.cat, before.cat);
+    assert.strictEqual(after.unit, before.unit);
+    assert.strictEqual(after.bin, before.bin);
+    assert.strictEqual(after.reorder, before.reorder);
+    assert.strictEqual(after.cost, before.cost);
+    await req("PATCH", "/api/items/OSB-716", { desc: before.desc });
+  });
+
   await t.test("issue is short-checked and dept-validated", async () => {
     let r = await req("POST", "/api/issue", { sku: "DR-EXT-36", qty: 9999 });
     assert.strictEqual(r.status, 409);
@@ -208,6 +231,15 @@ test("WHSE-01 API", async (t) => {
     }
   });
 
+  await t.test("CSV export neutralizes spreadsheet formulas in text fields", async () => {
+    await req("PATCH", "/api/items/DW-12-48", { desc: "=HYPERLINK evil payload" });
+    const res = await fetch(base + "/api/export/stock.csv", { headers: { cookie: adminCookie } });
+    const body = await res.text();
+    assert.ok(body.includes("'=HYPERLINK"), "formula prefix neutralized with leading apostrophe");
+    assert.ok(!body.includes(",=HYPERLINK"), "raw formula never lands at a cell boundary");
+    await req("PATCH", "/api/items/DW-12-48", { desc: "1/2 Drywall 4x8" });
+  });
+
   await t.test("30 concurrent issues against 20 on hand never oversell", async () => {
     await req("POST", "/api/count", { sku: "4X4X8-PT", exact: 20, ref: "RACE-SETUP" });
     const results = await Promise.all(
@@ -230,4 +262,5 @@ test("WHSE-01 API", async (t) => {
   });
 
   server.close();
+  fs.rmSync(process.env.WHSE_DATA_DIR, { recursive: true, force: true });
 });

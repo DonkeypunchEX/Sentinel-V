@@ -100,7 +100,14 @@ const MAX_FAILS = 8;
 const LOCK_MS = 15 * 60 * 1000;
 function loginBlocked(key) {
   const a = attempts.get(key);
-  return a && a.count >= MAX_FAILS && Date.now() < a.until;
+  if (!a) return false;
+  if (Date.now() >= a.until) {
+    /* lock expired — clear the stale count so one new failure
+       doesn't instantly re-lock */
+    attempts.delete(key);
+    return false;
+  }
+  return a.count >= MAX_FAILS;
 }
 function loginFailed(key) {
   const a = attempts.get(key) || { count: 0, until: 0 };
@@ -120,14 +127,22 @@ setInterval(() => {
 (function bootstrap() {
   const n = db.prepare("SELECT COUNT(*) AS c FROM users").get().c;
   if (n > 0) return;
-  const pin = String(crypto.randomInt(0, 100000000)).padStart(8, "0");
+  /* prefer WHSE_ADMIN_PIN so the credential never touches process logs;
+     fall back to a random PIN printed once for zero-config first runs */
+  const envPin = process.env.WHSE_ADMIN_PIN || "";
+  const usingEnv = PIN_RE.test(envPin);
+  const pin = usingEnv ? envPin : String(crypto.randomInt(0, 100000000)).padStart(8, "0");
   db.prepare("INSERT INTO users (initials, name, pin_hash, role, created_at) VALUES (?,?,?,?,?)")
     .run(ADMIN_INITIALS, "Administrator", hashPin(pin), "admin", Date.now());
-  /* printed once, never stored in plain text */
   console.log("==============================================");
   console.log(`  FIRST RUN — admin account created`);
   console.log(`  Initials: ${ADMIN_INITIALS}`);
-  console.log(`  PIN:      ${pin}`);
+  if (usingEnv) {
+    console.log("  PIN:      from WHSE_ADMIN_PIN (not logged)");
+  } else {
+    console.log(`  PIN:      ${pin}`);
+    console.log("  Set WHSE_ADMIN_PIN to keep this out of logs.");
+  }
   console.log(`  Sign in and change it under CREW right away.`);
   console.log("==============================================");
 })();
@@ -282,8 +297,11 @@ function movement(req, res, code) {
       if (code === "ISS" && qty > it.qty) {
         return { status: 409, error: `SHORT — only ${it.qty} ${it.unit} on hand` };
       }
+      if (code === "RCV" && it.qty + qty > MAX_QTY) {
+        return { status: 409, error: `OVER MAX — balance cannot exceed ${MAX_QTY}` };
+      }
       const delta = code === "RCV" ? qty : -qty;
-      it.qty = Math.min(MAX_QTY, it.qty + delta);
+      it.qty += delta;
       db.prepare("UPDATE items SET qty = ?, updated_at = ? WHERE sku = ?").run(it.qty, Date.now(), sku);
       postTx(code, it, delta, ref, "", req.user.initials, d.dept);
       return { item: it };
@@ -348,11 +366,12 @@ app.post("/api/items", auth, (req, res) => {
 
 app.patch("/api/items/:sku", auth, (req, res) => {
   const sku = cleanStr(req.params.sku, LEN.sku).toUpperCase();
-  const p = scrubItemBody({ ...req.body, sku }, false);
-  if (!p.desc) return res.status(400).json({ error: "DESCRIPTION REQUIRED" });
   const out = inTransaction(db, () => {
     const it = findItem.get(sku);
     if (!it) return { status: 404, error: `SKU ${sku} NOT ON FILE` };
+    /* merge the stored item first so omitted fields keep their values */
+    const p = scrubItemBody({ ...it, ...req.body, sku }, false);
+    if (!p.desc) return { status: 400, error: "DESCRIPTION REQUIRED" };
     db.prepare("UPDATE items SET desc=?, cat=?, unit=?, bin=?, reorder=?, cost=?, updated_at=? WHERE sku=?")
       .run(p.desc, p.cat, p.unit, p.bin, p.reorder, p.cost, Date.now(), sku);
     return { item: { ...it, ...p } };
@@ -474,7 +493,9 @@ app.patch("/api/depts/:code", auth, adminOnly, (req, res) => {
 
 /* ---------- CSV exports ---------- */
 const csvEsc = (v) => {
-  const s = String(v ?? "");
+  let s = String(v ?? "");
+  /* neutralize spreadsheet formula injection in free-text fields */
+  if (typeof v === "string" && /^[=+\-@]/.test(s)) s = `'${s}`;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 const csvRow = (r) => r.map(csvEsc).join(",") + "\r\n";

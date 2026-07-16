@@ -207,10 +207,16 @@ function WarehouseApp({ user, onSignOff }) {
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
+  /* sequence refreshes so a slow poll started before a mutation can't
+     land late and overwrite fresher post-mutation state */
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     try {
-      setData(await api("/api/state"));
+      const next = await api("/api/state");
+      if (seq === refreshSeq.current) setData(next);
     } catch (e) {
+      if (seq !== refreshSeq.current) return;
       if (e.status === 401) onSignOff();
       else flash(e.error, C.red);
     }
@@ -261,8 +267,11 @@ function WarehouseApp({ user, onSignOff }) {
 
     if (["RCV", "ISS", "CNT", "REQ"].includes(verb)) {
       const sku = (parts[1] || "").toUpperCase();
-      const qty = parseInt(parts[2], 10);
-      if (!sku || !Number.isInteger(qty) || qty < 0) {
+      /* whole token must be digits — "10X" is a typo, not a ten */
+      const qtyOk = /^\d{1,6}$/.test(parts[2] || "");
+      const qty = qtyOk ? parseInt(parts[2], 10) : NaN;
+      const minQty = verb === "CNT" ? 0 : 1;
+      if (!sku || !qtyOk || qty < minQty || qty > MAX_QTY) {
         flash(`USAGE: ${verb} SKU QTY${verb === "ISS" || verb === "REQ" ? " [DEPT]" : ""} — ? FOR HELP`, C.red);
         return;
       }
@@ -482,8 +491,15 @@ function WarehouseApp({ user, onSignOff }) {
 
       {/* ===== CREW / CRW001 ===== */}
       {tab === "crew" && <CrewTab user={user} flash={flash} onSignOff={async () => {
-        try { await api("/api/logout", { method: "POST", body: {} }); } catch (e) { /* cookie clears anyway */ }
-        onSignOff();
+        /* only leave the authenticated screen once the server has
+           actually cleared the session cookie */
+        try {
+          await api("/api/logout", { method: "POST", body: {} });
+          onSignOff();
+        } catch (e) {
+          if (e.status === 401) onSignOff();
+          else flash(e.error || "SIGN-OFF FAILED — STILL SIGNED ON", C.red);
+        }
       }} />}
 
       {/* ===== item action sheet ===== */}
@@ -501,7 +517,11 @@ function WarehouseApp({ user, onSignOff }) {
               await api(`/api/items/${encodeURIComponent(sku)}`, { method: "PATCH", body: patch });
               await refresh();
               flash(`SKU ${sku} updated`, C.amber);
-            } catch (e) { flash(e.error, C.red); }
+              return true;
+            } catch (e) {
+              flash(e.error, C.red);
+              return false;
+            }
           }}
           onDelete={async (sku) => {
             try {
@@ -852,7 +872,7 @@ function CrewTab({ user, flash, onSignOff }) {
         color: C.dim, borderRadius: 8, padding: "12px 0", fontFamily: MONO, fontSize: 13,
         fontWeight: 600, letterSpacing: 1, cursor: "pointer",
       }}>
-        SIGN OFF (F3)
+        SIGN OFF
       </button>
     </div>
   );
@@ -1012,10 +1032,10 @@ function ItemSheet({ item, depts, isAdmin, onClose, onReceive, onIssue, onCount,
               </div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <BigBtn color={C.green} disabled={!validQty} onClick={() => { onReceive(item.sku, q, ref.trim()); onClose(); }}>
+              <BigBtn color={C.green} disabled={!validQty} onClick={async () => { if (await onReceive(item.sku, q, ref.trim())) onClose(); }}>
                 RECEIVE +{validQty ? q : ""}
               </BigBtn>
-              <BigBtn color={C.red} disabled={!validQty || q > item.qty} onClick={() => { onIssue(item.sku, q, ref.trim(), dept); onClose(); }}>
+              <BigBtn color={C.red} disabled={!validQty || q > item.qty} onClick={async () => { if (await onIssue(item.sku, q, ref.trim(), dept)) onClose(); }}>
                 ISSUE −{validQty ? q : ""}
               </BigBtn>
             </div>
@@ -1033,7 +1053,7 @@ function ItemSheet({ item, depts, isAdmin, onClose, onReceive, onIssue, onCount,
             <input value={exact} onChange={(e) => setExact(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder={String(item.qty)} style={{ ...inputStyle, marginBottom: 12 }} />
             <label style={labelStyle}>REFERENCE (OPTIONAL)</label>
             <input value={ref} onChange={(e) => setRef(e.target.value.slice(0, LEN.ref))} maxLength={LEN.ref} placeholder="CYCLE COUNT" style={{ ...inputStyle, marginBottom: 16 }} />
-            <BigBtn color={C.amber} disabled={!validExact} onClick={() => { onCount(item.sku, ex, ref.trim()); onClose(); }}>
+            <BigBtn color={C.amber} disabled={!validExact} onClick={async () => { if (await onCount(item.sku, ex, ref.trim())) onClose(); }}>
               POST COUNT{validExact ? ` (${ex - item.qty >= 0 ? "+" : ""}${ex - item.qty})` : ""}
             </BigBtn>
           </div>
@@ -1057,16 +1077,20 @@ function ItemSheet({ item, depts, isAdmin, onClose, onReceive, onIssue, onCount,
                 <input value={edit.cost} onChange={(e) => setEdit({ ...edit, cost: e.target.value.replace(/[^0-9.]/g, "").slice(0, 10) })} inputMode="decimal" style={inputStyle} />
               </div>
             </div>
-            <BigBtn color={C.amber} onClick={() => {
-              onUpdate(item.sku, {
+            <BigBtn color={C.amber} onClick={async () => {
+              /* Number() validates the whole token — "1.2.3" is NaN, not 1.2;
+                 malformed input keeps the stored value instead of mutating it */
+              const nr = Number(edit.reorder);
+              const nc = Number(edit.cost);
+              const ok = await onUpdate(item.sku, {
                 desc: String(edit.desc).trim() || item.desc,
                 cat: item.cat,
                 unit: item.unit,
                 bin: String(edit.bin).trim() || item.bin,
-                reorder: parseInt(edit.reorder, 10) || 0,
-                cost: parseFloat(edit.cost) || 0,
+                reorder: Number.isInteger(nr) && nr >= 0 ? nr : item.reorder,
+                cost: Number.isFinite(nc) && nc >= 0 ? nc : item.cost,
               });
-              onClose();
+              if (ok) onClose();
             }}>
               SAVE CHANGES
             </BigBtn>
@@ -1165,16 +1189,19 @@ function AddForm({ onAdd }) {
         </div>
       </div>
       <div style={{ marginTop: 20 }}>
-        <BigBtn color={C.amber} disabled={!ready} onClick={() => onAdd({
-          sku: f.sku.trim(),
-          desc: f.desc.trim(),
-          cat: f.cat,
-          unit: f.unit,
-          bin: f.bin.trim(),
-          qty: parseInt(f.qty, 10) || 0,
-          reorder: parseInt(f.reorder, 10) || 0,
-          cost: parseFloat(f.cost) || 0,
-        })}>
+        <BigBtn color={C.amber} disabled={!ready} onClick={() => {
+          const nc = Number(f.cost);
+          onAdd({
+            sku: f.sku.trim(),
+            desc: f.desc.trim(),
+            cat: f.cat,
+            unit: f.unit,
+            bin: f.bin.trim(),
+            qty: parseInt(f.qty, 10) || 0,
+            reorder: parseInt(f.reorder, 10) || 0,
+            cost: Number.isFinite(nc) && nc >= 0 ? nc : 0,
+          });
+        }}>
           ADD TO ITEM FILE
         </BigBtn>
       </div>

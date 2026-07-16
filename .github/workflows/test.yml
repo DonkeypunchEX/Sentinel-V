@@ -3,8 +3,12 @@ name: Tests
 on:
   push:
     branches: [ main, develop ]
+    paths-ignore:
+      - 'warehouse-app/**'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'warehouse-app/**'
 
 jobs:
   test:

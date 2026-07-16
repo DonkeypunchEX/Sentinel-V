@@ -31,7 +31,7 @@ npm ci && npm run build && node server.js   # needs Node 22.5+
 
 Run behind a TLS reverse proxy (Caddy is the least work):
 
-```
+```text
 whse.example.com {
     reverse_proxy 127.0.0.1:8080
 }
@@ -95,6 +95,7 @@ sent. On a shop LAN with no outside access, plain HTTP is a fair tradeoff.
 | `WHSE_TRUST_PROXY` | `0` | Set `1` behind a TLS reverse proxy |
 | `WHSE_SESSION_HOURS` | `168` | Session lifetime (7 days) |
 | `WHSE_ADMIN_INITIALS` | `ADMIN` | Bootstrap admin initials |
+| `WHSE_ADMIN_PIN` | _(random)_ | Bootstrap admin PIN; set it to keep the credential out of process logs |
 
 ## Tests
 

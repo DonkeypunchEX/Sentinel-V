@@ -5,7 +5,7 @@
   "description": "WHSE-01 lumber warehouse inventory — self-hosted server",
   "main": "server.js",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "scripts": {
     "start": "node server.js",
