@@ -160,6 +160,34 @@ test("WHSE-01 API", async (t) => {
     assert.strictEqual((await req("POST", `/api/reqs/${r.json.req.id}/fill`, {})).status, 409);
   });
 
+  await t.test("PIN change revokes old sessions; admin reset revokes target's", async () => {
+    /* JD changes their own PIN: this device gets a fresh cookie, the old one dies */
+    const staleCookie = opCookie;
+    const r = await req("POST", "/api/me/pin", { oldPin: "4321", newPin: "9876" }, opCookie);
+    assert.strictEqual(r.status, 200);
+    opCookie = grabCookie(r.res);
+    assert.strictEqual((await req("GET", "/api/state", null, opCookie)).status, 200);
+    assert.strictEqual((await req("GET", "/api/state", null, staleCookie)).status, 401);
+
+    /* admin resets JD's PIN: JD's sessions all die until they sign back on */
+    const users = (await req("GET", "/api/users")).json.users;
+    const jd = users.find((u) => u.initials === "JD");
+    assert.strictEqual((await req("PATCH", `/api/users/${jd.id}`, { pin: "1111" })).status, 200);
+    assert.strictEqual((await req("GET", "/api/state", null, opCookie)).status, 401);
+    const back = await req("POST", "/api/login", { initials: "JD", pin: "1111" }, "");
+    assert.strictEqual(back.status, 200);
+    opCookie = grabCookie(back.res);
+  });
+
+  await t.test("full backup export is admin-only and complete", async () => {
+    assert.strictEqual((await req("GET", "/api/export/backup.json", null, opCookie)).status, 403);
+    const r = await req("GET", "/api/export/backup.json");
+    assert.strictEqual(r.status, 200);
+    assert.ok(r.json.items.length > 0 && r.json.tx.length > 0 && r.json.depts.length > 0);
+    assert.ok(r.json.users.length >= 2);
+    assert.ok(!JSON.stringify(r.json).includes("pin_hash"), "backup never contains PIN hashes");
+  });
+
   await t.test("login rate limiting locks out brute force", async () => {
     for (let i = 0; i < 8; i++) {
       const r = await req("POST", "/api/login", { initials: "ZZ", pin: "0000" }, "");

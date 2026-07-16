@@ -433,6 +433,7 @@ function WarehouseApp({ user, onSignOff }) {
             <ToolLink href="/api/export/stock.csv">STOCK CSV</ToolLink>
             <ToolLink href="/api/export/journal.csv">JOURNAL CSV</ToolLink>
             <ToolLink href="/api/export/reorder.csv">REORDER CSV</ToolLink>
+            {user.role === "admin" && <ToolLink href="/api/export/backup.json">BACKUP</ToolLink>}
           </div>
           {tx.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.dim, fontFamily: MONO, fontSize: 13 }}>

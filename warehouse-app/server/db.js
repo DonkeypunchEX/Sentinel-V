@@ -89,6 +89,12 @@ function openDb(dataDir) {
     db.exec("ALTER TABLE tx ADD COLUMN dept TEXT NOT NULL DEFAULT ''");
   }
 
+  /* migration: token version — bumping it revokes a user's sessions */
+  const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (!userCols.includes("tok")) {
+    db.exec("ALTER TABLE users ADD COLUMN tok INTEGER NOT NULL DEFAULT 0");
+  }
+
   if (db.prepare("SELECT COUNT(*) AS c FROM depts").get().c === 0) {
     const ins = db.prepare("INSERT INTO depts (code, name) VALUES (?,?)");
     for (const [code, name] of DEFAULT_DEPTS) ins.run(code, name);

@@ -77,19 +77,21 @@ if (fs.existsSync(secretPath)) {
   SECRET = crypto.randomBytes(32);
   fs.writeFileSync(secretPath, SECRET, { mode: 0o600 });
 }
+/* token: uid.tokver.exp.hmac — tokver is the user's session generation;
+   bumping it in the DB (PIN change/reset) revokes every outstanding token */
 const sign = (s) => crypto.createHmac("sha256", SECRET).update(s).digest("base64url");
-function makeToken(uid) {
-  const body = `${uid}.${Date.now() + SESSION_HOURS * 3600 * 1000}`;
+function makeToken(uid, tokver) {
+  const body = `${uid}.${tokver}.${Date.now() + SESSION_HOURS * 3600 * 1000}`;
   return `${body}.${sign(body)}`;
 }
 function parseToken(tok) {
   const parts = String(tok || "").split(".");
-  if (parts.length !== 3) return null;
-  const body = `${parts[0]}.${parts[1]}`;
+  if (parts.length !== 4) return null;
+  const body = `${parts[0]}.${parts[1]}.${parts[2]}`;
   const mac = sign(body);
-  if (mac.length !== parts[2].length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(parts[2]))) return null;
-  if (Number(parts[1]) < Date.now()) return null;
-  return Number(parts[0]);
+  if (mac.length !== parts[3].length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(parts[3]))) return null;
+  if (Number(parts[2]) < Date.now()) return null;
+  return { uid: Number(parts[0]), tokver: Number(parts[1]) };
 }
 
 /* ---------- login rate limiting (in-memory) ---------- */
@@ -144,6 +146,9 @@ app.use((req, res, next) => {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": req.path.startsWith("/api/") ? "no-store" : "no-cache",
   });
+  if (TRUST_PROXY && req.secure) {
+    res.set("Strict-Transport-Security", "max-age=31536000");
+  }
   next();
 });
 
@@ -169,20 +174,20 @@ function getCookie(req, name) {
   }
   return null;
 }
-function setSession(req, res, uid) {
+function setSession(req, res, user) {
   const secure = TRUST_PROXY ? req.secure : false;
   res.set("Set-Cookie",
-    `whse_sid=${makeToken(uid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_HOURS * 3600}${secure ? "; Secure" : ""}`);
+    `whse_sid=${makeToken(user.id, user.tok)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_HOURS * 3600}${secure ? "; Secure" : ""}`);
 }
 function clearSession(res) {
   res.set("Set-Cookie", "whse_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
 }
 
-const getUser = db.prepare("SELECT id, initials, name, role, active FROM users WHERE id = ?");
+const getUser = db.prepare("SELECT id, initials, name, role, active, tok FROM users WHERE id = ?");
 function auth(req, res, next) {
-  const uid = parseToken(getCookie(req, "whse_sid"));
-  const user = uid ? getUser.get(uid) : null;
-  if (!user || !user.active) return res.status(401).json({ error: "SIGN-ON REQUIRED" });
+  const t = parseToken(getCookie(req, "whse_sid"));
+  const user = t ? getUser.get(t.uid) : null;
+  if (!user || !user.active || user.tok !== t.tokver) return res.status(401).json({ error: "SIGN-ON REQUIRED" });
   req.user = user;
   next();
 }
@@ -226,7 +231,7 @@ app.post("/api/login", (req, res) => {
     return res.status(401).json({ error: "SIGN-ON FAILED" });
   }
   loginOk(key);
-  setSession(req, res, user.id);
+  setSession(req, res, user);
   res.json({ user: { initials: user.initials, name: user.name, role: user.role } });
 });
 
@@ -245,7 +250,10 @@ app.post("/api/me/pin", auth, (req, res) => {
   if (!PIN_RE.test(newPin)) return res.status(400).json({ error: "NEW PIN MUST BE 4–8 DIGITS" });
   const u = db.prepare("SELECT pin_hash FROM users WHERE id = ?").get(req.user.id);
   if (!verifyPin(oldPin, u.pin_hash)) return res.status(401).json({ error: "CURRENT PIN WRONG" });
-  db.prepare("UPDATE users SET pin_hash = ? WHERE id = ?").run(hashPin(newPin), req.user.id);
+  /* bump the token version to revoke every outstanding session for this
+     user, then hand this device a fresh cookie so it stays signed on */
+  db.prepare("UPDATE users SET pin_hash = ?, tok = tok + 1 WHERE id = ?").run(hashPin(newPin), req.user.id);
+  setSession(req, res, { id: req.user.id, tok: req.user.tok + 1 });
   res.json({ ok: true });
 });
 
@@ -505,6 +513,20 @@ app.get("/api/export/reorder.csv", auth, (_req, res) => {
   res.end();
 });
 
+/* Full restore point: every table except PIN hashes and the session
+   secret. Admin-only — this is the whole business in one file. */
+app.get("/api/export/backup.json", auth, adminOnly, (_req, res) => {
+  res.set("Content-Disposition", 'attachment; filename="whse01-backup.json"');
+  res.json({
+    exported: new Date().toISOString(),
+    items: db.prepare("SELECT * FROM items ORDER BY sku").all(),
+    tx: db.prepare("SELECT * FROM tx ORDER BY id").all(),
+    depts: db.prepare("SELECT * FROM depts ORDER BY code").all(),
+    reqs: db.prepare("SELECT * FROM reqs ORDER BY id").all(),
+    users: db.prepare("SELECT id, initials, name, role, active, created_at FROM users ORDER BY initials").all(),
+  });
+});
+
 /* ---------- crew management (admin) ---------- */
 app.get("/api/users", auth, adminOnly, (_req, res) => {
   res.json({ users: db.prepare("SELECT id, initials, name, role, active, created_at FROM users ORDER BY initials").all() });
@@ -532,7 +554,8 @@ app.patch("/api/users/:id", auth, adminOnly, (req, res) => {
   if (!target) return res.status(404).json({ error: "USER NOT FOUND" });
   if (req.body?.pin !== undefined) {
     if (!PIN_RE.test(String(req.body.pin))) return res.status(400).json({ error: "PIN MUST BE 4–8 DIGITS" });
-    db.prepare("UPDATE users SET pin_hash = ? WHERE id = ?").run(hashPin(String(req.body.pin)), id);
+    /* admin reset also revokes the target's outstanding sessions */
+    db.prepare("UPDATE users SET pin_hash = ?, tok = tok + 1 WHERE id = ?").run(hashPin(String(req.body.pin)), id);
   }
   if (req.body?.active !== undefined) {
     const active = req.body.active ? 1 : 0;
