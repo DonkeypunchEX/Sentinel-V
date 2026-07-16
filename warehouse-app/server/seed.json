@@ -1,0 +1,142 @@
+[
+  {
+    "sku": "2X4X8-SPF",
+    "desc": "2x4x8 SPF Stud",
+    "cat": "Dimensional",
+    "unit": "PC",
+    "bin": "A-01",
+    "qty": 412,
+    "reorder": 150,
+    "cost": 3.18
+  },
+  {
+    "sku": "2X4X16-SPF",
+    "desc": "2x4x16 SPF #2",
+    "cat": "Dimensional",
+    "unit": "PC",
+    "bin": "A-02",
+    "qty": 96,
+    "reorder": 60,
+    "cost": 7.85
+  },
+  {
+    "sku": "2X6X12-SPF",
+    "desc": "2x6x12 SPF #2",
+    "cat": "Dimensional",
+    "unit": "PC",
+    "bin": "A-04",
+    "qty": 140,
+    "reorder": 80,
+    "cost": 9.4
+  },
+  {
+    "sku": "2X10X16-SYP",
+    "desc": "2x10x16 SYP #2",
+    "cat": "Dimensional",
+    "unit": "PC",
+    "bin": "A-07",
+    "qty": 38,
+    "reorder": 40,
+    "cost": 24.6
+  },
+  {
+    "sku": "4X4X8-PT",
+    "desc": "4x4x8 Treated Post GC",
+    "cat": "Treated",
+    "unit": "PC",
+    "bin": "B-01",
+    "qty": 75,
+    "reorder": 50,
+    "cost": 11.25
+  },
+  {
+    "sku": "2X6X16-PT",
+    "desc": "2x6x16 Treated GC",
+    "cat": "Treated",
+    "unit": "PC",
+    "bin": "B-03",
+    "qty": 52,
+    "reorder": 40,
+    "cost": 18.9
+  },
+  {
+    "sku": "OSB-716",
+    "desc": "7/16 OSB 4x8",
+    "cat": "Sheet Goods",
+    "unit": "SHT",
+    "bin": "C-01",
+    "qty": 210,
+    "reorder": 120,
+    "cost": 12.35
+  },
+  {
+    "sku": "CDX-12",
+    "desc": "1/2 CDX Plywood 4x8",
+    "cat": "Sheet Goods",
+    "unit": "SHT",
+    "bin": "C-03",
+    "qty": 64,
+    "reorder": 80,
+    "cost": 31.5
+  },
+  {
+    "sku": "DW-12-48",
+    "desc": "1/2 Drywall 4x8",
+    "cat": "Drywall",
+    "unit": "SHT",
+    "bin": "D-01",
+    "qty": 180,
+    "reorder": 100,
+    "cost": 10.8
+  },
+  {
+    "sku": "DW-58-412",
+    "desc": "5/8 Type X Drywall 4x12",
+    "cat": "Drywall",
+    "unit": "SHT",
+    "bin": "D-02",
+    "qty": 88,
+    "reorder": 60,
+    "cost": 16.2
+  },
+  {
+    "sku": "DR-INT-30",
+    "desc": "30\" 6-Panel Interior Prehung",
+    "cat": "Doors",
+    "unit": "EA",
+    "bin": "E-02",
+    "qty": 14,
+    "reorder": 8,
+    "cost": 92
+  },
+  {
+    "sku": "DR-EXT-36",
+    "desc": "36\" Steel Exterior Prehung",
+    "cat": "Doors",
+    "unit": "EA",
+    "bin": "E-05",
+    "qty": 6,
+    "reorder": 6,
+    "cost": 168
+  },
+  {
+    "sku": "HRD-825",
+    "desc": "Hardie Plank 8.25\" Cedarmill",
+    "cat": "Siding",
+    "unit": "PC",
+    "bin": "F-01",
+    "qty": 320,
+    "reorder": 200,
+    "cost": 9.15
+  },
+  {
+    "sku": "TRM-CAS-356",
+    "desc": "356 Casing Primed MDF 7ft",
+    "cat": "Trim",
+    "unit": "PC",
+    "bin": "G-02",
+    "qty": 145,
+    "reorder": 100,
+    "cost": 5.4
+  }
+]

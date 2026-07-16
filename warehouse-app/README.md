@@ -1,65 +1,125 @@
-# WHSE-01 — Lumber Warehouse Inventory (Hardened)
+# WHSE-01 — Lumber Warehouse Inventory
 
-AS/400-inspired mobile inventory app for a small warehouse crew. One shared
-stock file and transaction journal; every phone sees the same numbers.
+AS/400-inspired mobile inventory system for a small warehouse crew, with
+Stratton Warren-style requisition and cost-center workflows. Two builds live
+here:
 
-`whse01-inventory.jsx` is the complete app — a single React component built to
-run as a **claude.ai Artifact** using the `window.storage` API (shared
-key-value storage scoped to the published artifact).
+| Build | Where it runs | Best for |
+|---|---|---|
+| `server/` — **self-hosted server** (recommended) | Any box with Node 22+ or Docker | Real logins, real transactions, unlimited journal |
+| `whse01-inventory.jsx` — **claude.ai Artifact** | Published artifact, `window.storage` | Zero-infrastructure trial run |
 
-## Deploying to your crew
+## The server build (`server/`)
 
-1. Open [claude.ai](https://claude.ai), start a chat, and paste the contents of
-   `whse01-inventory.jsx` asking Claude to create it as a React artifact
-   (or update your existing WHSE-01 artifact with this code).
-2. Publish the artifact and share the link with your crew. If your team is on
-   a Claude Team/Enterprise plan, share it within the organization so only
-   coworkers can open it.
-3. Each person opens the link on their phone and signs on with their initials
-   the first time. Add to home screen for one-tap access.
+Node + Express + SQLite (built-in `node:sqlite` — zero native dependencies).
+All stock math runs server-side inside real transactions, per-user sign-on
+with initials + PIN, and an unlimited audit journal.
 
-That's the whole deployment — no server, no build step. `window.storage` with
-the shared flag is what makes every device see the same stock file.
+### AS/400 heritage
 
-## What "hardened" means in this build
+- **Screen IDs** — every panel is numbered like a 5250 program: `SGN001`
+  sign-on, `INQ001` stock inquiry, `JRN001` journal, `REQ001` requisitions,
+  `ITM001` item entry, `CRW001` crew.
+- **Fast-path command line** — the `===>` prompt at the top takes commands
+  straight from a keyboard or scanner:
+  - `RCV SKU QTY [REF]` — receive stock
+  - `ISS SKU QTY [DEPT] [REF]` — issue to a cost center
+  - `CNT SKU QTY` — post a physical count
+  - `REQ SKU QTY [DEPT] [NOTE]` — raise a requisition
+  - `GO STOCK / JRN / REQ / ADD / CREW` — jump between screens
+  - anything else — stock search; `?` — help
+- **Function keys** — `F3`=Exit, `F5`=Refresh, `F6`=New SKU, `F9`=Journal,
+  `F10`=Requisitions (hint bar shows on wide screens).
 
-| Area | Protection |
-|---|---|
-| Concurrent edits | Every posting re-reads the shared file, applies the change, writes, then **reads back to verify** it wasn't clobbered. A lost race retries on the fresher copy (3 attempts) instead of silently dropping a coworker's entry. |
-| Stale screens | Devices poll the shared file every 12 s (when visible) so stock levels converge without manual refresh. |
-| Accountability | Operator sign-on (initials per device); every journal entry is stamped with who posted it. |
-| Corrupt data | Everything read from storage is schema-sanitized: bad JSON, truncated blobs, wrong types, duplicate SKUs, and out-of-range numbers are normalized before they can crash a phone or poison a write. |
-| Input abuse | Length limits and numeric clamps on every field (qty capped at 999,999; SKU restricted to `A-Z 0-9 -`). |
-| Render crashes | Error boundary shows a recover screen instead of a blank page; stock data is unaffected. |
-| Data loss | One-tap CSV export of stock and journal, plus full JSON backup, from the JOURNAL tab. Journal keeps the last 500 entries — export regularly. |
-| Seed wipe | "Load sample stock" refuses to run if the shared file already has items (stale phone can't wipe real inventory). |
-| Storage outage | Write failures switch the device to LOCAL ONLY with a visible retry button instead of silently losing entries. |
-| Network deps | No external fonts/scripts — system fonts only, works under a strict CSP. |
+### Stratton Warren heritage
 
-## Known limits — read before relying on it
+- **Department / cost-center coding** — issues can be charged to a
+  department (`YARD`, `SHOP`, `DELIV`, `JOBSITE`, `MAINT`, `WASTE` seeded;
+  admins manage the list under CREW). The journal and CSV exports carry the
+  dept on every issue, so you can see where material went.
+- **Requisition queue** — any crew member raises a REQ for stock; whoever
+  pulls it hits FILL, which posts a real short-checked ISS transaction
+  stamped with requester, filler, dept, and `REQ#`. Only the requester or an
+  admin can cancel.
+- **Par-level reorder report** — `REORDER CSV` exports everything at/below
+  its reorder point with a suggested buy quantity (restock to 2× reorder
+  point) and estimated cost.
 
-- **No real authentication.** Anyone with the artifact link (and, on a team
-  plan, org access) can post transactions under any initials. The journal is
-  an honor-system audit trail, not a security control.
-- **Not transactional.** The write-verify-retry loop makes lost updates rare,
-  not impossible. Two devices posting the same SKU in the same second can
-  still race; the journal will show both entries, so discrepancies are
-  auditable and fixable with a COUNT.
-- **Journal is capped** at 500 entries. Export the CSV weekly (or daily on a
-  busy yard) if you need permanent records.
-- **This is a crew convenience tool, not a system of record.** If the numbers
-  drive purchasing or accounting, treat the CSV exports as the record and
-  reconcile with physical counts.
+### Security posture
 
-If you outgrow these limits, the next step is a small real backend
-(e.g. Postgres + a few endpoints) with per-user logins — the UI here ports
-over largely unchanged.
+- Initials + PIN sign-on; PINs scrypt-hashed, never stored in plain text
+- First run creates one admin and prints its PIN to the console **once**
+- Signed httpOnly session cookies; login rate limiting (8 fails → 15 min)
+- Admin vs operator roles: only admins delete SKUs, manage crew and depts
+- Server-side validation on every field; movement quantities are strictly
+  rejected (never silently clamped) when out of range
+- Transactions guarantee no negative stock and no lost entries under
+  concurrent use — verified by a test that fires 30 simultaneous issues at
+  20 units and gets exactly 20 through
+- CSP, nosniff, same-origin checks on mutations, no external assets
 
-## Verifying changes
-
-The component parses with esbuild and the sanitizer/CSV helpers are
-unit-testable by appending an export line:
+### Run it with Docker (recommended)
 
 ```bash
-npx esbuild whse01-inventory.jsx --loader:.jsx=jsx --outfile=/dev/null
+cd warehouse-app/server
+docker compose up -d --build
+docker compose logs whse01   # grab the first-run ADMIN PIN from here
 ```
+
+Open `http://<host>:8080`, sign on as `ADMIN` with the printed PIN, change
+the PIN under CREW, then add your crew members. Data lives in the
+`whse01-data` volume — back it up like any other database.
+
+### Run it bare
+
+```bash
+cd warehouse-app/server
+npm ci
+npm run build        # bundles the frontend into public/app.js
+node server.js       # first run prints the ADMIN PIN
+```
+
+Requires Node **22.5+** (uses the built-in `node:sqlite`).
+
+### Put it on the internet safely
+
+Run it behind a TLS reverse proxy (Caddy is the least work):
+
+```
+whse.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+and set `WHSE_TRUST_PROXY=1` so session cookies are marked `Secure`.
+On a shop LAN with no external access, plain HTTP is a reasonable tradeoff.
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `PORT` | `8080` | Listen port |
+| `WHSE_DATA_DIR` | `./data` | SQLite database + session secret location |
+| `WHSE_TRUST_PROXY` | `0` | Set `1` behind a TLS reverse proxy |
+| `WHSE_SESSION_HOURS` | `168` | Session lifetime (7 days) |
+| `WHSE_ADMIN_INITIALS` | `ADMIN` | Bootstrap admin initials |
+
+### Tests
+
+```bash
+npm test   # 14 API tests: auth, roles, movements, reqs, rate limit, race safety
+```
+
+A Playwright browser e2e (sign-on → seed → command-line issue → journal →
+requisition fill) is exercised in development; the API suite is the
+committed regression net.
+
+## The artifact build (`whse01-inventory.jsx`)
+
+Single-file React artifact for claude.ai using shared `window.storage`.
+Hardened with write-verify-retry sync, schema sanitization, operator
+stamping, and CSV/JSON export — but it has no real authentication and
+storage is best-effort rather than transactional. Good for trying the
+workflow with the crew before standing up the server; see the header
+comment in the file for details. The AS/400 command line and Stratton
+Warren requisition features are server-build only.
