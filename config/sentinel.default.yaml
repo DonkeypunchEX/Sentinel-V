@@ -1,0 +1,29 @@
+# Sentinel-V default configuration.
+# Copy to config/sentinel.yaml and adjust; every key is optional and
+# falls back to the same defaults built into SentinelVSystem.
+
+system_mode: production        # dev | test | staging | production
+defense_level: standard        # passive | standard | aggressive | paranoid
+
+# Deception network: decoy addresses are derived from this range.
+deception_network: "10.0.0.0/24"
+decoy_count: 5
+
+# Adaptive threat matrix
+ml_learning_rate: 0.1
+ml_memory_size: 10000
+
+# Response engine: 0=log only .. 3=full playbook (all actions are
+# log/recommend semantics — integrations decide what to enforce).
+max_escalation: 3
+autonomous_response: true
+
+# Federation (threat-intel outbox; transport left to integrations)
+federation_enabled: false
+# federation_discovery_url: "https://peers.example.internal/discovery"
+
+# Resource budget the monitor compares host usage against (fractions)
+resource_budget:
+  cpu: 0.3
+  memory: 0.5
+  bandwidth: 0.2
