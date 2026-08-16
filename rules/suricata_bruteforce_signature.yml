@@ -1,0 +1,29 @@
+title: Suricata IDS Signature — Brute Force / Scan
+id: 8b7d5a90-1e34-4c77-8f2a-0d6b9c3e5a12
+status: experimental
+description: >
+  Surfaces Suricata EVE alerts whose signature indicates brute-force or scanning
+  activity (e.g. ET SCAN / SSH brute force rules). High precision because the
+  underlying IDS signature already matched.
+author: Sentinel-V
+references:
+  - https://attack.mitre.org/techniques/T1110/
+logsource:
+  product: suricata
+detection:
+  selection:
+    source: suricata.eve
+    kind: alert
+  keywords:
+    alert.signature|contains:
+      - Brute Force
+      - SSH
+      - SCAN
+      - Login
+  condition: selection and keywords
+falsepositives:
+  - Security scanners you operate yourself; allowlist their source IPs.
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1110

@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    ports: ["8787:8787"]
+    environment:
+      SENTINEL_DB_URL: postgresql+psycopg://sentinel:sentinel@db:5432/sentinel
+    depends_on: [db]
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  # Phase 2: add an isolated cowrie service on its own network (egress-only).
+volumes:
+  pgdata:

@@ -1,0 +1,21 @@
+# Copy to sentinel.yaml and edit. Env vars (SENTINEL_*) override these.
+db_url: "sqlite:///sentinel.db"
+rules_dir: "rules/"
+model_path: "models/anomaly.joblib"
+api_host: "127.0.0.1"
+api_port: 8787
+
+collectors:
+  suricata_eve: { path: "/var/log/suricata/eve.json", enabled: false }
+  auth_log:     { path: "/var/log/auth.log", enabled: false }
+
+deception:
+  cowrie:     { log: "/var/lib/cowrie/log/cowrie.json", enabled: false }
+  opencanary: { log: "/var/tmp/opencanary.log", enabled: false }
+
+intel:
+  otx:       { api_key_env: "OTX_API_KEY", enabled: false }
+  greynoise: { community: true, enabled: false }
+
+response:
+  require_approval_for_destructive: true   # do not change without reading PLAYBOOKS.md

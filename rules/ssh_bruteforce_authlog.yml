@@ -1,0 +1,28 @@
+title: SSH Failed Authentication (possible brute force)
+id: 3f1c2b8e-6a2d-4e21-9b0a-2c9f4a1d7e01
+status: experimental
+description: >
+  Fires on each failed SSH authentication normalized from auth.log. A single
+  failure is low-signal; the brute-force *incident* (ATT&CK T1110) emerges when
+  correlation groups many of these from one source IP in a short window.
+author: Sentinel-V
+references:
+  - https://attack.mitre.org/techniques/T1110/
+logsource:
+  product: linux
+  service: sshd
+detection:
+  selection:
+    source: auth.log
+    kind: auth_fail
+    service|startswith: sshd
+  condition: selection
+fields:
+  - src_ip
+  - user
+falsepositives:
+  - Legitimate users fat-fingering a password or an expired key.
+level: medium
+tags:
+  - attack.credential_access
+  - attack.t1110
