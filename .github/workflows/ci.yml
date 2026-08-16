@@ -1,0 +1,20 @@
+name: ci
+# warehouse-app/ is a separate Node project with its own toolchain; this
+# workflow gates the Sentinel-V Python framework only.
+on:
+  push:
+    paths-ignore: ['warehouse-app/**']
+  pull_request:
+    paths-ignore: ['warehouse-app/**']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[ml,intel,dev]"
+      - run: ruff check sentinel_v tests
+      - run: mypy sentinel_v
+      - run: pytest -q
+      - run: pip-audit || true   # Phase 4: make this blocking

@@ -1,55 +1,47 @@
 #!/usr/bin/env python3
-"""Basic Sentinel-V usage: stand up a system and feed it events.
+"""Minimal end-to-end usage of the Sentinel-V pipeline.
 
-Run with only the base install:
+Runs entirely in-memory (no server, no external services):
 
-    pip install -e .
+    pip install -e ".[ml]"
     python examples/basic_usage.py
+
+It builds a store, wires the Sigma rule detector, and ingests two Events — a
+failed SSH login and a Suricata brute-force alert — printing the Alerts that
+fire. This is the same seam the API's ``POST /events`` sits on.
 """
+from __future__ import annotations
 
-import json
+from pathlib import Path
 
-from sentinel_v import SentinelVSystem
+from sentinel_v.collectors import AuthLogCollector, SuricataEveCollector
+from sentinel_v.detection.rules import SigmaRuleDetector
+from sentinel_v.pipeline import Pipeline
+from sentinel_v.storage import Store
 
 
 def main() -> None:
-    """Process a benign and a hostile event, then print system status."""
-    sentinel = SentinelVSystem(
-        {
-            "system_mode": "test",
-            "deception_network": "198.51.100.0/24",
-            "decoy_count": 3,
-        }
+    store = Store("sqlite://")  # in-memory
+    pipeline = Pipeline(store, [SigmaRuleDetector(Path("rules"))])
+
+    auth = AuthLogCollector.parse_line(
+        "Jan  1 12:00:00 host sshd[1234]: Failed password for invalid user "
+        "admin from 1.2.3.4 port 22 ssh2"
+    )
+    suri = SuricataEveCollector.parse_line(
+        '{"event_type":"alert","src_ip":"9.9.9.9","dest_ip":"10.0.0.1",'
+        '"alert":{"signature":"ET SCAN SSH BruteForce"}}'
     )
 
-    benign = {
-        "source_ip": "192.168.1.10",
-        "dest_ip": "192.168.1.1",
-        "dest_port": 443,
-        "protocol": "tcp",
-    }
-    hostile = {
-        "source_ip": "203.0.113.66",
-        "dest_ip": sentinel.deception_net.decoys[0],
-        "dest_port": 22,
-        "protocol": "tcp",
-        "failed_auth": True,
-        "payload_suspicious": True,
-    }
+    for event in (auth, suri):
+        if event is None:
+            continue
+        _, alerts = pipeline.ingest(event)
+        for alert in alerts:
+            print(f"[{alert.severity}] {alert.title} "
+                  f"(ATT&CK {alert.attack_technique}) src={event.src_ip}")
 
-    for event in (benign, hostile):
-        assessment = sentinel.process_event(event)
-        print(
-            f"{event['source_ip']} -> {event['dest_ip']}:{event['dest_port']}  "
-            f"level={assessment['threat_level']}  "
-            f"score={assessment['anomaly_score']:.2f}  "
-            f"decoy={assessment['is_decoy_interaction']}"
-        )
-
-    print("\nSystem status:")
-    print(json.dumps(sentinel.get_system_status()["event_counts"], indent=2))
-
-    sentinel.shutdown()
+    print("store counts:", store.counts())
 
 
 if __name__ == "__main__":

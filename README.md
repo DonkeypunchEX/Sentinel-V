@@ -1,95 +1,71 @@
-# 🛡️ Sentinel-V: Autonomous Cyber-Defense Framework
+# Sentinel-V
 
-![Tests](https://github.com/DonkeypunchEX/Sentinel-V/actions/workflows/test.yml/badge.svg)
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+A self-hostable **defensive (blue-team) automation framework**:
+**ingest → detect (rules + ML) → deceive → enrich → gated response → dashboard.**
 
-Autonomous defense framework: an event-processing core that scores
-threats behaviorally, runs a deception network, and produces
-proportional, auditable responses. Response execution is
-**simulation-safe by design** — the engine logs and recommends actions;
-enforcement is left to integrations you control.
+This is an honest rebuild of an earlier stub whose README over-promised
+("quantum-resistant, federated, formally verified") and under-delivered (empty
+package dirs, placeholder code). Scope and status below are truthful. See
+`docs/FEASIBILITY.md` for what's real vs deferred.
 
-This repository also contains **WHSE-01**, a self-hosted warehouse
-inventory system, under [`warehouse-app/`](warehouse-app/README.md).
+## Status
+**Phases 0 and 1 are in.** The control plane persists telemetry and runs both
+detectors on ingest; alerts land in the store and are queryable over the API.
+Deception, enrichment and gated response follow per `docs/ROADMAP.md`.
 
-## What's implemented
-
-Working with only the base install (`pip install -e .`):
-
-- **`SentinelVSystem`** — orchestrates the full event pipeline:
-  validate → deception check → threat scoring → response → federation
-- **Adaptive threat matrix** — behavioral anomaly scoring (port
-  fan-out, sensitive-port pressure, repetition, sensor signals) with
-  bounded memory and `BENIGN / SUSPICIOUS / MALICIOUS / CRITICAL` levels
-- **Deception network** — deterministic decoy allocation across a
-  network range; any contact with a decoy is flagged and escalates
-- **Response engine** — graduated playbooks with capped escalation;
-  every execution is recorded in an auditable history
-- **Federation node** — queues minimized threat intelligence (raw
-  events never leave the node); transport is integration-defined
-- **Hybrid crypto** — X25519 + HKDF + AES-256-GCM behind a
-  PQC-shaped interface
-- **`sentinel-v` CLI** — start, analyze, status, deploy-decoys,
-  validate-config, export-sbom
-
-Optional extras add research modules loaded lazily (the base package
-never imports them): `ml` (scikit-learn detector, federated learning),
-`quantum` (liboqs KEM), and a paramiko SSH honeypot.
+| Capability | Status | Notes |
+|---|---|---|
+| Core Event/Alert/Incident/Action schema | 🟢 done | `sentinel_v/models.py`, validated |
+| Typed settings (YAML + env) | 🟢 done | `sentinel_v/config.py`, pydantic-settings |
+| Storage (SQLAlchemy: events/alerts/incidents/audit) | 🟢 done | `sentinel_v/storage.py` |
+| Control plane API (`/health` `/events` `/alerts` `/metrics`) | 🟢 done | `sentinel_v/api/app.py` |
+| Collectors (Suricata EVE + auth.log) | 🟢 done | `sentinel_v/collectors/` |
+| Rule (Sigma) detection | 🟢 done | `detection/rules.py`, ATT&CK-tagged, rules in `rules/` |
+| ML anomaly detection (reference impl) | 🟢 done | `detection/anomaly.py` + `features.py` + `datasets.py`, real-data only |
+| Ingest pipeline (detectors → store → `/alerts`) | 🟢 done | `sentinel_v/pipeline.py` |
+| Gated response orchestrator | 🟢 done | `response/orchestrator.py`, human-in-loop |
+| Deception adapters (Cowrie/OpenCanary) | 🟡 stubbed | Phase 2 |
+| Intel enrichment (OTX/GreyNoise) | 🟡 stubbed | Phase 3 |
+| Correlation → incidents · playbook runner wiring | 🟡 stubbed | Phase 3 |
+| Post-quantum / federated / adversarial | 🔴 deferred | Phase 4 stretch, not MVP |
 
 ## Quick start
-
 ```bash
-git clone https://github.com/DonkeypunchEX/Sentinel-V.git
-cd Sentinel-V
-pip install -e ".[dev,cli]"   # Python 3.10+
-pytest tests/                 # 32 tests
-python examples/basic_usage.py
+make setup          # venv + editable install (.[ml,intel,dev])
+make test           # pytest
+make run            # FastAPI control plane on :8787
 ```
-
-```python
-from sentinel_v import SentinelVSystem
-
-sentinel = SentinelVSystem({"system_mode": "production"})
-assessment = sentinel.process_event(
-    {
-        "source_ip": "203.0.113.66",
-        "dest_ip": "10.0.0.15",
-        "dest_port": 22,
-        "protocol": "tcp",
-        "failed_auth": True,
-    }
-)
-print(assessment["threat_level"], assessment["anomaly_score"])
-sentinel.shutdown()
-```
-
-CLI equivalent:
-
+`GET http://127.0.0.1:8787/health` returns ok. Then ingest and query:
 ```bash
-sentinel-v status
-sentinel-v analyze events.json --output results.json
-sentinel-v deploy-decoys --network 10.0.0.0/24 --count 5
+curl -s localhost:8787/events -H 'content-type: application/json' \
+  -d '{"source":"auth.log","kind":"auth_fail","src_ip":"1.2.3.4",
+       "fields":{"service":"sshd","user":"root"}}'
+curl -s localhost:8787/alerts    # the T1110 rule alert this just fired
+curl -s localhost:8787/metrics   # table counts + loaded detectors
 ```
+The ML detector joins the pipeline once a fitted model exists at
+`model_path` (config); fit it on a real baseline (CIC-IDS2017 benign rows via
+`detection/datasets.py`, or your own capture) — it will not train on synthetic
+data.
 
-Configuration reference: [`config/sentinel.default.yaml`](config/sentinel.default.yaml).
-Docker: `docker build -t sentinel-v . && docker run sentinel-v`
-(mount your own `config/` to override defaults).
+## Also in this repo
+`warehouse-app/` is a separate, self-hosted warehouse inventory system
+(**WHSE-01**, Node) with its own toolchain and CI path; it is unrelated to the
+Sentinel-V Python framework and lives alongside it.
 
-## Development
+## Design in one breath
+Deception is the highest-fidelity sensor (near-zero false positives); rules
+catch known TTPs; ML catches the unknowns; response is **gated and reversible**
+by default because a blue tool that can brick your own network on a false
+positive is a liability. Everything maps to NIST CSF + MITRE ATT&CK/D3FEND.
 
-```bash
-make dev-install   # editable install with dev tools
-make test          # pytest
-make lint          # flake8 + mypy + bandit (same gates as CI)
-make security      # bandit + pip-audit
-make format        # black
-```
+## Scope guardrails
+Defensive only. No offensive tooling, no attacking third parties, no
+autonomous destructive action without an approval gate. See `CLAUDE.md`.
 
-CI runs the same gates across Python 3.10–3.12 on every push and pull
-request; `warehouse-app/` changes are gated by its own Node test suite
-instead.
+## Docs
+`CLAUDE.md` (build brief) · `docs/ARCHITECTURE.md` · `docs/FEASIBILITY.md` ·
+`docs/ROADMAP.md` · `docs/RND.md` · `docs/PLAYBOOKS.md` · `docs/HARDWARE.md`
 
 ## License
-
-MIT
+MIT (add `LICENSE` file — original repo had none).
