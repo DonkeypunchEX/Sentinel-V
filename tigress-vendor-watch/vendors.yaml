@@ -1,0 +1,13 @@
+# TIGRESS Vendor Watch — watchlist
+# One entry per vendor/supplier you monitor for a client.
+# name:   used for EDGAR/KEV/sanctions name matching (use the registered name for public cos)
+# domain: used for HIBP breach-exposure lookup
+# runs:   which collectors to fire for this vendor
+#         available: edgar, kev, hibp, sanctions, disruption
+vendors:
+  - name: "Ford Motor Co"
+    domain: "ford.com"
+    runs: [edgar, kev, sanctions, disruption]
+  - name: "Cisco Systems"
+    domain: "cisco.com"
+    runs: [edgar, kev, hibp, sanctions, disruption]
