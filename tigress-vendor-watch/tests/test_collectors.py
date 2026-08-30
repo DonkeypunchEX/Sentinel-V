@@ -141,6 +141,21 @@ def test_synthesize_template_fallback_respects_grades():
     assert "HIBP not run" in txt
 
 
+def test_synthesize_backend_selection_falls_back():
+    from core.provenance import Item
+    demo = [Item("CISA KEV", "Cisco ASA — CVE-2026-20349", "http://x", Tier.T2_OFFICIAL,
+                 relevance=0.85, verification=Verification.OPENED, summary="x").score()]
+    gaps = ["HIBP not run."]
+    # anthropic backend with no key present here -> graceful template fallback
+    res = synthesize.synthesize("Cisco", demo, gaps, backend="anthropic")
+    assert res["engine"] == "template", "no ANTHROPIC_API_KEY -> template fallback"
+    # unknown backend name -> template fallback, never a crash
+    res2 = synthesize.synthesize("Cisco", demo, gaps, backend="does-not-exist")
+    assert res2["engine"] == "template"
+    # both real backends are registered behind the one interface
+    assert set(synthesize.BACKENDS) == {"ollama", "anthropic"}
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
