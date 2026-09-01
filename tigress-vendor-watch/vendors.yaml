@@ -4,6 +4,11 @@
 # domain: used for HIBP breach-exposure lookup
 # runs:   which collectors to fire for this vendor
 #         available: edgar, kev, hibp, sanctions, disruption
+# owners: OPTIONAL. The vendor's known owners (from the client's KYC), each with a
+#         % stake. Fed to the sanctions collector for the OFAC 50 Percent Rule: a
+#         vendor owned >=50% in aggregate by designated parties is itself blocked
+#         even when OFAC does not list it. OFAC publishes no ownership data, so this
+#         can only be evaluated against ownership you supply here.
 vendors:
   - name: "Ford Motor Co"
     domain: "ford.com"
@@ -11,3 +16,12 @@ vendors:
   - name: "Cisco Systems"
     domain: "cisco.com"
     runs: [edgar, kev, hibp, sanctions, disruption]
+  # Example of a private supplier with an ownership graph to screen:
+  # - name: "Acme Components LLC"
+  #   domain: "acme-components.example"
+  #   runs: [sanctions, disruption]
+  #   owners:
+  #     - name: "Parent Holdings Ltd"
+  #       pct: 40
+  #     - name: "Some Designated Entity"
+  #       pct: 15

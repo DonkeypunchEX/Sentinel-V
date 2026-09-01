@@ -70,6 +70,14 @@ ALT_TYPE = 2      # aka / fka / nka
 ALT_NAME = 3
 EMPTY = "-0-"
 
+# OFAC 50 Percent Rule: an entity owned 50% or more — directly or indirectly,
+# individually OR IN AGGREGATE — by one or more blocked persons is ITSELF blocked,
+# even though OFAC never lists it. OFAC does not publish ownership graphs, so this
+# threshold can only be evaluated against ownership the analyst supplies (from the
+# client's KYC). We screen each named owner against OFAC and aggregate the stakes
+# of any that are designated.
+OWNERSHIP_THRESHOLD = 50.0
+
 
 def _get_text(urls) -> str:
     """Fetch the first URL that responds; OFAC mirrors the list on two hosts."""
@@ -204,10 +212,97 @@ def _match_alts(alt_text: str, query: str, list_name: str, ent_map: dict) -> lis
     return items
 
 
-def collect(vendor: str, limit: int = 25) -> list:
-    """Return graded Items for OFAC hits on `vendor` across SDN + Consolidated,
-    matching both canonical names and a.k.a./f.k.a. aliases."""
+def _screen(name: str, primary: str, alt: str, ent_map: dict, list_name: str) -> list:
+    """Screen one name against a single list's primary + a.k.a. data."""
+    hits = _match_rows(primary, name, list_name)
+    if alt:
+        hits += _match_alts(alt, name, list_name, ent_map)
+    return hits
+
+
+def _dedupe(items: list) -> list:
+    """De-dupe by (list, entity); prefer a primary-name match over an alias match."""
+    best = {}
+    for it in items:
+        key = (it.raw.get("list"), it.raw.get("ent_num"))
+        cur = best.get(key)
+        if cur is None or (cur.raw.get("match") == "alias" and it.raw.get("match") != "alias"):
+            best[key] = it
+    return sorted(best.values(), key=lambda it: -it.relevance)
+
+
+def _ownership_items(vendor: str, owners: list, owner_hits: dict) -> list:
+    """Apply the OFAC 50 Percent Rule to analyst-supplied ownership.
+
+    owners:     [{"name": str, "pct": float}, ...] the vendor's known owners
+    owner_hits: {owner_name: [Item, ...]} OFAC designations found for each owner
+    Returns graded Items: one per designated owner (so the OFAC source is preserved)
+    plus one aggregate conclusion Item when designated ownership exists.
+    """
     items = []
+    designated = [(o, owner_hits[o["name"]]) for o in owners if owner_hits.get(o["name"])]
+    if not designated:
+        return items
+
+    aggregate = 0.0
+    labels = []
+    for o, hits in designated:
+        pct = float(o.get("pct") or 0)
+        aggregate += pct
+        labels.append(f"{o['name']} ({pct:g}%)")
+        best = _dedupe(hits)[0]
+        items.append(Item(
+            source=best.source,
+            title=f"Designated OWNER of {vendor} — {best.raw.get('name')} ({pct:g}% stake)",
+            url=best.url,
+            tier=Tier.T1_PRIMARY,
+            relevance=0.9,
+            verification=Verification.OPENED,
+            summary=(f"{o['name']}, holding a {pct:g}% stake in {vendor}, is on the OFAC "
+                     f"{best.raw.get('list')} list. Ownership by a blocked person can block "
+                     f"the vendor under the 50% rule."),
+            raw={"kind": "owner", "owner": o["name"], "pct": pct,
+                 "ent_num": best.raw.get("ent_num"), "list": best.raw.get("list")},
+        ).score())
+
+    blocked = aggregate >= OWNERSHIP_THRESHOLD
+    items.append(Item(
+        source="OFAC 50% Rule",
+        title=(f"{vendor} — BLOCKED by ownership (OFAC 50% rule)" if blocked
+               else f"{vendor} — partial designated ownership below 50%"),
+        url="https://ofac.treasury.gov/faqs/topic/1521",  # OFAC 50% rule FAQs
+        tier=Tier.T1_PRIMARY,
+        relevance=0.97 if blocked else 0.65,
+        # rests on OFAC designations (opened) + analyst-supplied KYC ownership
+        verification=Verification.CORROBORATED,
+        summary=(
+            f"Designated owners total {aggregate:g}% of {vendor}: {', '.join(labels)}. "
+            + ("This meets/exceeds the 50% threshold — the vendor is itself BLOCKED even "
+               "though OFAC does not list it. CLIENT ACTION: HALT dealings and escalate to "
+               "counsel."
+               if blocked else
+               "This is below the 50% threshold on the ownership provided, but any designated "
+               "owner is a serious flag. CLIENT ACTION: verify the FULL ownership chain — "
+               "undisclosed stakes could push the aggregate to 50%.")
+            + " Note: OFAC publishes no ownership data; this rests on the ownership you supplied."
+        ),
+        raw={"kind": "ownership_rule", "vendor": vendor, "aggregate_pct": aggregate,
+             "blocked": blocked, "owners": labels},
+    ).score())
+    return items
+
+
+def collect(vendor: str, limit: int = 25, owners: list = None) -> list:
+    """Return graded Items for OFAC hits on `vendor` across SDN + Consolidated,
+    matching canonical names and a.k.a./f.k.a. aliases.
+
+    If `owners` is given ([{"name","pct"}, ...]), also screen each owner and apply
+    the OFAC 50 Percent Rule: a vendor owned >=50% in aggregate by designated
+    parties is itself blocked even when OFAC does not list it.
+    """
+    owners = owners or []
+    vendor_items = []
+    owner_hits = {}
     for list_name, files in SOURCES.items():
         try:
             primary = _get_text(files["primary"])
@@ -216,32 +311,40 @@ def collect(vendor: str, limit: int = 25) -> list:
             print(f"[sanctions] {list_name} primary fetch FAILED — screen INCOMPLETE: {e}")
             continue
         ent_map = _ent_name_map(primary)
-        hits = _match_rows(primary, vendor, list_name)
         try:
             alt = _get_text(files["alt"])
-            hits += _match_alts(alt, vendor, list_name, ent_map)
         except Exception as e:
             print(f"[sanctions] {list_name} a.k.a. file fetch failed "
                   f"(primary-name screen still ran): {e}")
-        print(f"[sanctions] {len(hits)} {list_name} match(es) for '{vendor}' "
-              f"(name + a.k.a.)")
-        items.extend(hits)
+            alt = ""
 
-    # de-dupe by entity; prefer a primary-name match over an alias match
-    best = {}
-    for it in items:
-        key = (it.raw.get("list"), it.raw.get("ent_num"))
-        cur = best.get(key)
-        if cur is None or (cur.raw.get("match") == "alias" and it.raw.get("match") != "alias"):
-            best[key] = it
-    deduped = sorted(best.values(), key=lambda it: -it.relevance)
-    return deduped[:limit]
+        hits = _screen(vendor, primary, alt, ent_map, list_name)
+        print(f"[sanctions] {len(hits)} {list_name} match(es) for '{vendor}' (name + a.k.a.)")
+        vendor_items.extend(hits)
+
+        for o in owners:
+            oh = _screen(o["name"], primary, alt, ent_map, list_name)
+            if oh:
+                owner_hits.setdefault(o["name"], []).extend(oh)
+
+    items = _dedupe(vendor_items)
+    if owners:
+        n_flagged = len([o for o in owners if owner_hits.get(o['name'])])
+        print(f"[sanctions] 50% rule: {n_flagged}/{len(owners)} named owner(s) designated")
+        items += _ownership_items(vendor, owners, owner_hits)
+    return items[:limit]
 
 
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "Rosoboronexport"
     from core.provenance import tag
-    hits = collect(target, limit=10)
+    # optional ownership demo: --owner "Name:pct" (repeatable)
+    owners = []
+    for a in sys.argv[2:]:
+        if a.startswith("--owner=") and ":" in a:
+            nm, _, pct = a[len("--owner="):].rpartition(":")
+            owners.append({"name": nm.strip(), "pct": float(pct)})
+    hits = collect(target, limit=10, owners=owners)
     if not hits:
         print(f"  CLEAN — no OFAC match for '{target}' (this is the expected result "
               f"for a legitimate vendor; report it as a passed screen, not silence).")

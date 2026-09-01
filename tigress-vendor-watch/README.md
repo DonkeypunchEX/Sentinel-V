@@ -20,7 +20,11 @@ collectors/   one module per source
                                           with NO key; stealer-log + breacheddomain
                                           layers activate when HIBP_API_KEY is set
   sanctions.py OFAC/sanctions (T1)     — WORKS, no key. SDN + consolidated,
-                                          word-boundary matched. A hit HALTS dealings
+                                          word-boundary matched, a.k.a.-resolved.
+                                          + OFAC 50% ownership rule: screens
+                                          analyst-supplied owners; >=50% aggregate
+                                          designated ownership blocks the vendor.
+                                          A hit HALTS dealings
   disruption.py news disruption (T4)   — WORKS, no key. Google News RSS leads,
                                           graded down to true weight (watch-only)
 core/
@@ -71,8 +75,17 @@ Built out in this pass (all no-key layers run today; keys unlock the rest):
    deterministic template fallback; enable with `watch.py --synthesize`.
 5. **edgar.py** — efts full-text fallback for delisted/historical filers.
 
-Still open: sanctions beneficial-ownership drill-down, PACER/court-docket and
-business-registration collectors for private-vendor distress, and the dashboard.
+**OFAC 50 Percent Rule** (`sanctions.py`): an entity owned 50%+ in aggregate by
+blocked persons is itself blocked even when OFAC never lists it. OFAC publishes
+no ownership graph, so this is evaluated against ownership YOU supply (the
+client's KYC) — per vendor via `owners:` in `vendors.yaml`, or on the CLI with
+`--owner "Name:pct"` (repeatable). Each owner is screened (name + a.k.a.); if the
+designated stakes reach 50% the vendor is flagged BLOCKED, below 50% it is
+flagged for ownership-chain verification. When `sanctions` runs without owners,
+the brief declares the rule as an explicit gap rather than implying a clean pass.
+
+Still open: PACER/court-docket and business-registration collectors for
+private-vendor distress, and the dashboard.
 
 Copy `.env.example` -> `.env` (gitignored) and fill in `EDGAR_UA` (required by
 SEC) plus any optional keys. First real deliverable: run one real vendor end to
@@ -89,6 +102,8 @@ EDGAR_UA="TIGRESS research you@you.com" \
 python3 collectors/edgar.py "Ford Motor Co"
 python3 collectors/kev.py "Cisco"
 python3 collectors/sanctions.py "Rosoboronexport"
+# OFAC 50% rule — screen a vendor's owners:
+python3 collectors/sanctions.py "Acme Components LLC" "--owner=Parent Holdings:40" "--owner=Some Designated Entity:15"
 python3 collectors/hibp.py "adobe.com"
 python3 collectors/disruption.py "Yellow Corp"
 

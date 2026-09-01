@@ -25,19 +25,24 @@ from render import render
 
 from collectors import edgar, kev, hibp, sanctions, disruption
 
+# each collector callable takes (query, domain, ctx); ctx carries extras like
+# analyst-supplied ownership for the OFAC 50% rule.
 COLLECTORS = {
-    "edgar":      ("SEC EDGAR (filings, distress)", lambda v, d: edgar.collect(v)),
-    "kev":        ("CISA KEV (exploited vulns)",    lambda v, d: kev.collect(v)),
-    "hibp":       ("HIBP (breach exposure)",        lambda v, d: hibp.collect(d) if d else []),
-    "sanctions":  ("OFAC sanctions (SDN/consolidated)", lambda v, d: sanctions.collect(v)),
-    "disruption": ("News disruption leads (T4 watch)",  lambda v, d: disruption.collect(v)),
+    "edgar":      ("SEC EDGAR (filings, distress)", lambda v, d, c: edgar.collect(v)),
+    "kev":        ("CISA KEV (exploited vulns)",    lambda v, d, c: kev.collect(v)),
+    "hibp":       ("HIBP (breach exposure)",        lambda v, d, c: hibp.collect(d) if d else []),
+    "sanctions":  ("OFAC sanctions (SDN/consolidated)",
+                   lambda v, d, c: sanctions.collect(v, owners=c.get("owners"))),
+    "disruption": ("News disruption leads (T4 watch)",  lambda v, d, c: disruption.collect(v)),
 }
 
 
 def run(vendor: str, domain: str = None, runs: list = None, aliases: dict = None,
-        synth: bool = False) -> str:
+        synth: bool = False, owners: list = None) -> str:
     runs = runs or ["edgar", "kev"]
     aliases = aliases or {}
+    owners = owners or []
+    ctx = {"owners": owners}
     items = []
     gaps = []
 
@@ -52,7 +57,7 @@ def run(vendor: str, domain: str = None, runs: list = None, aliases: dict = None
         # string can't satisfy both, so we let the vendor entry carry both.
         query = aliases.get(name, vendor)
         try:
-            got = fn(query, domain)
+            got = fn(query, domain, ctx)
             if not got:
                 gaps.append(f"{label}: no results for '{query}' "
                             f"({'no domain given' if name=='hibp' and not domain else 'nothing matched, or source empty/stubbed'}).")
@@ -64,6 +69,10 @@ def run(vendor: str, domain: str = None, runs: list = None, aliases: dict = None
     if "hibp" not in runs or not domain:
         gaps.append("Breach-exposure (HIBP) not run — wire the key + domain for "
                     "the highest-signal source.")
+    if "sanctions" in runs and not owners:
+        gaps.append("OFAC 50% ownership rule NOT evaluated — supply the vendor's "
+                    "owners (name + % stake) to screen for indirect blocking. A vendor "
+                    "owned >=50% by a designated party is blocked even if not listed.")
     gaps.append("Private-vendor coverage is limited: EDGAR is public-company only. "
                 "A private supplier may have zero footprint here.")
 
@@ -109,11 +118,25 @@ if __name__ == "__main__":
                     help="per-collector alias, e.g. --alias kev=Cisco "
                          "(repeatable). EDGAR wants the registered name, KEV "
                          "the short product token.")
+    ap.add_argument("--owner", action="append", default=[],
+                    help="vendor owner for the OFAC 50%% rule, 'Name:pct' e.g. "
+                         "--owner 'Parent Holdings:40' (repeatable). Screens each "
+                         "owner against OFAC; aggregate >=50%% designated blocks the vendor.")
     args = ap.parse_args()
     aliases = {}
     for a in args.alias:
         if "=" in a:
             k, v = a.split("=", 1)
             aliases[k.strip()] = v.strip()
+    owners = []
+    for o in args.owner:
+        nm, sep, pct = o.rpartition(":")
+        if sep:
+            try:
+                owners.append({"name": nm.strip(), "pct": float(pct)})
+            except ValueError:
+                print(f"[watch] ignoring --owner '{o}' (pct not a number)")
+        else:
+            owners.append({"name": o.strip(), "pct": 0.0})
     run(args.vendor, args.domain, [r.strip() for r in args.runs.split(",")], aliases,
-        synth=args.synthesize)
+        synth=args.synthesize, owners=owners)

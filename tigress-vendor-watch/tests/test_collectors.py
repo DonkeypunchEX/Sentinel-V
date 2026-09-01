@@ -92,6 +92,42 @@ def test_sanctions_alias_resolves_to_primary():
     assert "a.k.a." in it.summary or "aka" in it.summary.lower()
 
 
+def test_sanctions_50pct_ownership_rule():
+    # OFAC 50% rule: a vendor owned >=50% in aggregate by designated parties is
+    # itself blocked even though OFAC never lists it. OFAC publishes no ownership,
+    # so this is evaluated against analyst-supplied stakes.
+    primary = "\n".join([
+        '18782,"ROSOBORONEKSPORT OAO","Entity","RUSSIA-EO14024",-0-,-0-,-0-,-0-,-0-,-0-,-0-,"Arms"',
+        '555,"BLOCKED HOLDINGS LLC","Entity","SDGT",-0-,-0-,-0-,-0-,-0-,-0-,-0-,-0-',
+    ])
+    hits_for = lambda name: sanctions._match_rows(primary, name, "SDN")
+
+    # aggregate 30+25 = 55% -> BLOCKED, headline-eligible
+    owners = [{"name": "Blocked Holdings LLC", "pct": 30},
+              {"name": "Rosoboroneksport OAO", "pct": 25},
+              {"name": "Clean Co", "pct": 45}]
+    oh = {o["name"]: hits_for(o["name"]) for o in owners if hits_for(o["name"])}
+    items = sanctions._ownership_items("Acme Vendor", owners, oh)
+    rule = [it for it in items if it.raw.get("kind") == "ownership_rule"][0]
+    assert rule.raw["blocked"] is True and rule.raw["aggregate_pct"] == 55
+    assert rule.headline_eligible is True
+    # each designated owner is surfaced with its OFAC source preserved
+    owner_items = [it for it in items if it.raw.get("kind") == "owner"]
+    assert len(owner_items) == 2
+
+    # aggregate 20% -> partial flag, not blocked
+    owners2 = [{"name": "Blocked Holdings LLC", "pct": 20}, {"name": "Clean Co", "pct": 80}]
+    oh2 = {o["name"]: hits_for(o["name"]) for o in owners2 if hits_for(o["name"])}
+    rule2 = [it for it in sanctions._ownership_items("Beta", owners2, oh2)
+             if it.raw.get("kind") == "ownership_rule"][0]
+    assert rule2.raw["blocked"] is False and rule2.raw["aggregate_pct"] == 20
+
+    # no designated owners -> no ownership items at all
+    owners3 = [{"name": "Clean Co", "pct": 100}]
+    oh3 = {o["name"]: hits_for(o["name"]) for o in owners3 if hits_for(o["name"])}
+    assert sanctions._ownership_items("Gamma", owners3, oh3) == []
+
+
 def test_disruption_leads_never_headline():
     xml = b"""<?xml version="1.0"?><rss version="2.0"><channel>
     <item><title>Yellow Corp files for bankruptcy amid strike</title>
