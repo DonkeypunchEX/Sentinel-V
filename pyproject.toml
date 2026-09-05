@@ -45,8 +45,14 @@ dev = [
     "pip-audit>=2.7",
 ]
 cli = ["click>=8.0", "rich>=12.0"]
-ml = ["scikit-learn>=1.0", "tensorflow>=2.10; platform_machine != 'arm64'"]
-quantum = ["qiskit>=0.39.0"]
+ml = [
+    "scikit-learn>=1.0",
+    "tensorflow>=2.10; platform_machine != 'arm64'",
+    "adversarial-robustness-toolbox>=1.15",
+    "flwr>=1.5",
+]
+quantum = ["liboqs-python>=0.10.0"]
+build = ["pyinstaller>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/sentinel-v-cyber-defense"

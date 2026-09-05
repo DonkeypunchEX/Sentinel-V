@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test coverage lint format security clean build publish docker docker-run version
+.PHONY: help install dev-install test coverage lint format security clean build build-exe publish docker docker-run version
 
 help:
 	@echo "Sentinel-V Cyber-Defense Framework"
@@ -12,7 +12,8 @@ help:
 	@echo "  make format      Format code with black"
 	@echo "  make security    Run security checks"
 	@echo "  make clean       Clean build artifacts"
-	@echo "  make build       Build package"
+	@echo "  make build       Build package (sdist + wheel)"
+	@echo "  make build-exe   Build a standalone sentinel-v executable (PyInstaller)"
 	@echo "  make publish     Publish to PyPI (requires credentials)"
 	@echo "  make docker      Build Docker image"
 
@@ -53,6 +54,11 @@ clean:
 
 build:
 	python -m build
+
+build-exe:
+	pip install -e ".[cli,build]"
+	pyinstaller --onefile --name sentinel-v --clean --paths . scripts/pyinstaller_entry.py
+	@echo "Built dist/sentinel-v (no Python install required to run it)"
 
 publish:
 	twine upload dist/*

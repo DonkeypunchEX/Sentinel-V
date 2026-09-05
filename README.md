@@ -76,6 +76,36 @@ Configuration reference: [`config/sentinel.default.yaml`](config/sentinel.defaul
 Docker: `docker build -t sentinel-v . && docker run sentinel-v`
 (mount your own `config/` to override defaults).
 
+### Windows
+
+`scripts/deploy.sh` is bash-only. On native Windows (PowerShell, no
+WSL required), use the equivalent script:
+
+```powershell
+.\scripts\deploy.ps1 install   # install deps, write config/sentinel.yaml, run tests
+.\scripts\deploy.ps1 start     # start in the background, log to logs\sentinel.log
+.\scripts\deploy.ps1 status
+.\scripts\deploy.ps1 stop
+```
+
+### Standalone executable
+
+To hand `sentinel-v` to someone without a Python environment, build a
+single-file executable with [PyInstaller](https://pyinstaller.org/):
+
+```bash
+make build-exe             # Linux/macOS: writes dist/sentinel-v
+```
+
+```powershell
+.\scripts\build-exe.ps1    # Windows: writes dist\sentinel-v.exe
+```
+
+The result runs standalone (`dist/sentinel-v status`) — no `pip
+install` needed on the target machine. It bundles only the base +
+`cli` extras; the optional `ml`/`quantum` research modules still
+require their own environment.
+
 ## Development
 
 ```bash
@@ -89,6 +119,14 @@ make format        # black
 CI runs the same gates across Python 3.10–3.12 on every push and pull
 request; `warehouse-app/` changes are gated by its own Node test suite
 instead.
+
+### Optional extras
+
+```bash
+pip install -e ".[ml]"       # scikit-learn detector, ART robust model, Flower federated learning
+pip install -e ".[quantum]"  # liboqs-backed post-quantum KEM (QuantumCrypto)
+pip install -e ".[cli,build]"  # CLI + PyInstaller, for building a standalone executable
+```
 
 ## License
 
