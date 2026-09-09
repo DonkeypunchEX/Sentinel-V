@@ -111,8 +111,10 @@ class IncidentRow(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     title: Mapped[str] = mapped_column(String)
     severity: Mapped[str] = mapped_column(String, index=True)
+    attack_technique: Mapped[str | None] = mapped_column(String, index=True, default=None)
     status: Mapped[str] = mapped_column(String, index=True, default="open")
     alert_ids: Mapped[list] = mapped_column(JSON, default=list)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
     def to_model(self) -> Incident:
         return Incident(
@@ -120,8 +122,10 @@ class IncidentRow(Base):
             ts=_aware(self.ts),
             title=self.title,
             severity=Severity(self.severity),
+            attack_technique=self.attack_technique,
             status=self.status,
             alert_ids=list(self.alert_ids or []),
+            detail=dict(self.detail or {}),
         )
 
     @classmethod
@@ -131,8 +135,10 @@ class IncidentRow(Base):
             ts=i.ts,
             title=i.title,
             severity=i.severity.value,
+            attack_technique=i.attack_technique,
             status=i.status,
             alert_ids=list(i.alert_ids),
+            detail=dict(i.detail),
         )
 
 
@@ -148,6 +154,8 @@ class AuditRow(Base):
     reversible: Mapped[bool] = mapped_column(Boolean, default=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     approver: Mapped[str | None] = mapped_column(String, default=None)
+    executed: Mapped[bool] = mapped_column(Boolean, index=True, default=False)
+    incident_id: Mapped[str | None] = mapped_column(String, index=True, default=None)
     undo: Mapped[dict | None] = mapped_column(JSON, default=None)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
@@ -163,6 +171,8 @@ class AuditRow(Base):
             undo=self.undo,
             approved=self.approved,
             approver=self.approver,
+            executed=self.executed,
+            incident_id=self.incident_id,
             detail=dict(self.detail or {}),
         )
 
@@ -179,6 +189,8 @@ class AuditRow(Base):
             undo=a.undo,
             approved=a.approved,
             approver=a.approver,
+            executed=a.executed,
+            incident_id=a.incident_id,
             detail=dict(a.detail),
         )
 
@@ -279,6 +291,11 @@ class Store:
         with self.session() as s:
             return [row.to_model() for row in s.scalars(stmt)]
 
+    def get_incident(self, incident_id: str) -> Incident | None:
+        with self.session() as s:
+            row = s.get(IncidentRow, incident_id)
+            return row.to_model() if row else None
+
     # ---- Audit (response actions) ------------------------------------------
     def record_action(self, action: Action) -> Action:
         with self.session() as s:
@@ -286,8 +303,25 @@ class Store:
             s.commit()
         return action
 
-    def get_audit(self, *, limit: int = 100) -> list[Action]:
-        stmt = select(AuditRow).order_by(AuditRow.ts.desc()).limit(limit)
+    def get_audit(self, *, limit: int = 100, executed: bool | None = None) -> list[Action]:
+        stmt = select(AuditRow).order_by(AuditRow.ts.desc())
+        if executed is not None:
+            stmt = stmt.where(AuditRow.executed == executed)
+        stmt = stmt.limit(limit)
+        with self.session() as s:
+            return [row.to_model() for row in s.scalars(stmt)]
+
+    def get_pending_actions(self, *, limit: int = 100) -> list[Action]:
+        """Actions queued for approval (not yet executed) — durable across restart."""
+        return self.get_audit(limit=limit, executed=False)
+
+    def get_action(self, action_id: str) -> Action | None:
+        with self.session() as s:
+            row = s.get(AuditRow, action_id)
+            return row.to_model() if row else None
+
+    def get_actions_for_incident(self, incident_id: str) -> list[Action]:
+        stmt = select(AuditRow).where(AuditRow.incident_id == incident_id)
         with self.session() as s:
             return [row.to_model() for row in s.scalars(stmt)]
 

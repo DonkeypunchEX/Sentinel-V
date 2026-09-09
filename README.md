@@ -18,15 +18,16 @@ Deception, enrichment and gated response follow per `docs/ROADMAP.md`.
 | Core Event/Alert/Incident/Action schema | 🟢 done | `sentinel_v/models.py`, validated |
 | Typed settings (YAML + env) | 🟢 done | `sentinel_v/config.py`, pydantic-settings |
 | Storage (SQLAlchemy: events/alerts/incidents/audit) | 🟢 done | `sentinel_v/storage.py` |
-| Control plane API (`/health` `/events` `/alerts` `/metrics`) | 🟢 done | `sentinel_v/api/app.py` |
+| Control plane API (`/health` `/events` `/alerts` `/incidents` `/actions/pending` `/approve` `/metrics`) | 🟢 done | `sentinel_v/api/app.py` |
+| Correlation → Incidents (thresholded, deduped) | 🟢 done | `sentinel_v/correlation.py`; real T1110 brute-force threshold |
+| Gated response + YAML playbooks (durable audit, reversible) | 🟢 done | `sentinel_v/response/`, `playbooks/`; human-in-loop `/approve` |
 | Collectors (Suricata EVE + auth.log) | 🟢 done | `sentinel_v/collectors/` |
 | Rule (Sigma) detection | 🟢 done | `detection/rules.py`, ATT&CK-tagged, rules in `rules/` |
 | ML anomaly detection (reference impl) | 🟢 done | `detection/anomaly.py` + `features.py` + `datasets.py`, real-data only |
-| Ingest pipeline (detectors → store → `/alerts`) | 🟢 done | `sentinel_v/pipeline.py` |
-| Gated response orchestrator | 🟢 done | `response/orchestrator.py`, human-in-loop |
+| Ingest pipeline (detectors → correlate → respond) | 🟢 done | `sentinel_v/pipeline.py` |
 | Deception adapters (Cowrie/OpenCanary) | 🟡 stubbed | Phase 2 |
-| Intel enrichment (OTX/GreyNoise) | 🟡 stubbed | Phase 3 |
-| Correlation → incidents · playbook runner wiring | 🟡 stubbed | Phase 3 |
+| Intel enrichment (OTX/GreyNoise/HIBP exposure) | 🟡 stubbed | Phase 3 (next) |
+| Playbooks (brute-force done; honeypot/C2/rogue-device) | 🟡 1 of 4 | `playbooks/` |
 | Post-quantum / federated / adversarial | 🔴 deferred | Phase 4 stretch, not MVP |
 
 ## Quick start

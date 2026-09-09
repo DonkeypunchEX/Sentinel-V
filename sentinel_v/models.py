@@ -78,8 +78,11 @@ class Incident(BaseModel):
     ts: datetime = Field(default_factory=_utcnow)
     title: str
     severity: Severity = Severity.LOW
+    attack_technique: str | None = None  # dominant MITRE ATT&CK id, if any
     alert_ids: list[str] = Field(default_factory=list)
     status: str = "open"  # open | contained | closed
+    # correlation metadata: grouping key, asset (src_ip), counts, enrichment
+    detail: dict[str, object] = Field(default_factory=dict)
 
 
 class Action(BaseModel):
@@ -95,6 +98,8 @@ class Action(BaseModel):
     undo: dict[str, object] | None = None  # how to reverse, recorded at execution
     approved: bool = False
     approver: str | None = None
+    executed: bool = False  # False = queued/pending; True = handler ran (see audit)
+    incident_id: str | None = None  # incident this action responds to
     detail: dict[str, object] = Field(default_factory=dict)
 
     def requires_gate(self) -> bool:

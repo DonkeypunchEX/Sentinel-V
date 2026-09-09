@@ -69,9 +69,20 @@ class IntelCfg(BaseModel):
     greynoise: GreyNoiseCfg = Field(default_factory=GreyNoiseCfg)
 
 
+class CorrelationCfg(BaseModel):
+    """Dedupe + time/asset grouping of Alerts into Incidents."""
+
+    window_seconds: int = 60  # sliding window for grouping same-asset alerts
+    brute_force_threshold: int = 5  # N same-detector alerts from one src → incident
+
+
 class ResponseCfg(BaseModel):
     # Do not flip this off without reading docs/PLAYBOOKS.md — it is the gate.
     require_approval_for_destructive: bool = True
+    playbooks_dir: Path = Path("playbooks/")
+    # Where the simulated block_ip handler writes its (reversible) firewall rules.
+    # Simulation-safe by design: we write intent to a file, we do not touch nftables.
+    block_list_path: Path = Path("var/blocked_ips.nft")
 
 
 class Settings(BaseSettings):
@@ -93,6 +104,7 @@ class Settings(BaseSettings):
     collectors: CollectorsCfg = Field(default_factory=CollectorsCfg)
     deception: DeceptionCfg = Field(default_factory=DeceptionCfg)
     intel: IntelCfg = Field(default_factory=IntelCfg)
+    correlation: CorrelationCfg = Field(default_factory=CorrelationCfg)
     response: ResponseCfg = Field(default_factory=ResponseCfg)
 
     @classmethod

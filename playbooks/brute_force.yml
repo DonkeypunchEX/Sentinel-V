@@ -1,0 +1,20 @@
+name: brute-force
+description: >
+  Credential brute-force / stuffing (ATT&CK T1110). Fires on a correlated
+  brute-force Incident (N failed auths from one source in the window, or a
+  Cowrie login). Proposes a firewall block behind the approval gate, and
+  notifies. Nothing destructive fires without /approve.
+# NIST 800-61: Containment. D3FEND: Network Traffic Filtering.
+trigger:
+  attack_technique: T1110
+  min_severity: high
+steps:
+  - action: notify
+    params:
+      channel: log
+  - action: block_ip
+    destructive: true
+    reversible: true
+    auto: false          # gated: requires human /approve before it runs
+    params:
+      duration_seconds: 3600

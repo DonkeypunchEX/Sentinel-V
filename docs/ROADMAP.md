@@ -31,12 +31,19 @@ until it's met. Check boxes as you go. Keep `make test` green throughout.
 - [ ] docker-compose service for Cowrie on an isolated network
 - **Accept:** an SSH login attempt to the Cowrie container produces a normalized honeypot Event that reaches the store and auto-escalates severity.
 
-## Phase 3 — Enrich + Correlate + Respond (gated)
+## Phase 3 — Enrich + Correlate + Respond (gated)  🟡 in progress
 - [ ] `intel/enrich.py`: OTX + GreyNoise providers, cached, pluggable
-- [ ] Correlation service: dedupe + time/asset grouping → Incidents
-- [ ] `response/orchestrator.py`: YAML playbook runner + **approval gate** + audit log + reversible actions
-- [ ] Implement the 4 playbooks from PLAYBOOKS.md (brute-force, honeypot-hit, C2-beacon, rogue-device)
-- **Accept:** brute-force playbook runs end-to-end: alert → enrich → propose block → wait for `/approve` → (simulated) block recorded in audit with an undo. Nothing destructive fires without approval.
+- [x] Correlation service: dedupe + time/asset grouping → Incidents (`correlation.py`;
+  threshold T1110 brute-force, deception auto-escalate; `tests/test_correlation.py`)
+- [x] `response/orchestrator.py`: YAML playbook runner + **approval gate** + **durable**
+  audit (persisted to store, survives restart) + reversible actions (`response/`;
+  `tests/test_response.py`)
+- [~] Implement the 4 playbooks from PLAYBOOKS.md — **1/4 done**: brute-force
+  (`playbooks/brute_force.yml`). honeypot-hit / C2-beacon / rogue-device pending.
+- **Accept:** ✅ brute-force runs end-to-end via the API — alert → correlated incident →
+  propose block → wait for `/approve` → simulated block recorded in audit with an undo;
+  nothing destructive fires before approval (`tests/test_incidents_api.py`). (Enrichment
+  step of the chain lands with item above.)
 
 ## Phase 4 — Harden + stretch (only after 0–3 ship)
 - [ ] Purple-team validation: Atomic Red Team procedures mapped to detections; a `make validate` that runs them and asserts detections fire

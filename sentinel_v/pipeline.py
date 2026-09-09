@@ -11,27 +11,59 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from sentinel_v.config import Settings
+from sentinel_v.correlation import Correlator
 from sentinel_v.detection.anomaly import AnomalyDetector
 from sentinel_v.detection.base import Detector
 from sentinel_v.detection.features import flow_features
 from sentinel_v.detection.rules import SigmaRuleDetector
-from sentinel_v.models import Alert, Event
+from sentinel_v.models import Action, Alert, Event, Incident
+from sentinel_v.response.playbooks import PlaybookRunner
 from sentinel_v.storage import Store
 
 log = logging.getLogger(__name__)
 
 
+@dataclass
+class IngestResult:
+    """Everything one ingested Event produced, across the whole pipeline."""
+
+    event: Event
+    alerts: list[Alert] = field(default_factory=list)
+    incidents: list[Incident] = field(default_factory=list)
+    actions: list[Action] = field(default_factory=list)
+
+    def as_tuple(self) -> tuple[Event, list[Alert]]:
+        return self.event, self.alerts
+
+
 class Pipeline:
-    def __init__(self, store: Store, detectors: Iterable[Detector]) -> None:
+    def __init__(
+        self,
+        store: Store,
+        detectors: Iterable[Detector],
+        *,
+        correlator: Correlator | None = None,
+        runner: PlaybookRunner | None = None,
+    ) -> None:
         self.store = store
         self.detectors: list[Detector] = list(detectors)
+        self.correlator = correlator
+        self.runner = runner
 
     def ingest(self, event: Event) -> tuple[Event, list[Alert]]:
-        """Persist one Event, run detectors, persist and return its Alerts."""
+        """Persist Event → detect → correlate → respond. Returns (event, alerts).
+
+        The full result (incidents + actions) is available via :meth:`ingest_full`;
+        this method keeps the original 2-tuple shape for existing callers.
+        """
+        return self.ingest_full(event).as_tuple()
+
+    def ingest_full(self, event: Event) -> IngestResult:
         self.store.add_event(event)
-        alerts: list[Alert] = []
+        result = IngestResult(event=event)
         for detector in self.detectors:
             try:
                 fired = list(detector.detect([event]))
@@ -40,8 +72,26 @@ class Pipeline:
                 continue
             for alert in fired:
                 self.store.add_alert(alert)
-                alerts.append(alert)
-        return event, alerts
+                result.alerts.append(alert)
+                self._correlate_and_respond(alert, event, result)
+        return result
+
+    def _correlate_and_respond(self, alert: Alert, event: Event, result: IngestResult) -> None:
+        if self.correlator is None:
+            return
+        try:
+            incident = self.correlator.correlate(alert, event)
+        except Exception:  # noqa: BLE001 - correlation must not drop ingestion
+            log.exception("correlation failed on alert %s", alert.id)
+            return
+        if incident is None:
+            return
+        result.incidents.append(incident)
+        if self.runner is not None:
+            try:
+                result.actions.extend(self.runner.run_for_incident(incident))
+            except Exception:  # noqa: BLE001 - response must not drop ingestion
+                log.exception("response failed on incident %s", incident.id)
 
     def ingest_many(self, events: Iterable[Event]) -> tuple[int, list[Alert]]:
         n = 0
@@ -59,10 +109,17 @@ def build_pipeline(settings: Settings, store: Store) -> Pipeline:
     The Sigma detector always loads. The anomaly detector joins only when a
     fitted model already exists on disk — it will not train itself on ingest,
     and an unfitted detector must never be wired in (it would raise per event).
+    Correlation and the gated response runner are always wired.
     """
     detectors: list[Detector] = [SigmaRuleDetector(settings.rules_dir)]
     if settings.model_path.exists():
         detectors.append(
             AnomalyDetector(flow_features, model_path=settings.model_path, kinds={"flow"})
         )
-    return Pipeline(store, detectors)
+    correlator = Correlator(
+        store,
+        window_seconds=settings.correlation.window_seconds,
+        brute_force_threshold=settings.correlation.brute_force_threshold,
+    )
+    runner = PlaybookRunner(store, settings)
+    return Pipeline(store, detectors, correlator=correlator, runner=runner)
