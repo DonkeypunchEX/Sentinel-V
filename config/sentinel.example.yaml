@@ -16,6 +16,13 @@ deception:
 intel:
   otx:       { api_key_env: "OTX_API_KEY", enabled: false }
   greynoise: { community: true, enabled: false }
+  hibp:      { api_key_env: "HIBP_API_KEY", enabled: false }  # exposure for assets you OWN
+
+correlation:
+  window_seconds: 60           # sliding window for grouping same-asset alerts
+  brute_force_threshold: 5     # N failed auths from one source in-window → T1110 incident
 
 response:
   require_approval_for_destructive: true   # do not change without reading PLAYBOOKS.md
+  playbooks_dir: "playbooks/"
+  block_list_path: "var/blocked_ips.nft"   # simulated block target; wire to nftables yourself

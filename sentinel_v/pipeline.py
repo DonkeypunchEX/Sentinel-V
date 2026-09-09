@@ -19,6 +19,8 @@ from sentinel_v.detection.anomaly import AnomalyDetector
 from sentinel_v.detection.base import Detector
 from sentinel_v.detection.features import flow_features
 from sentinel_v.detection.rules import SigmaRuleDetector
+from sentinel_v.intel.enrich import EnrichmentService
+from sentinel_v.intel.providers import build_enrichment
 from sentinel_v.models import Action, Alert, Event, Incident
 from sentinel_v.response.playbooks import PlaybookRunner
 from sentinel_v.storage import Store
@@ -47,11 +49,13 @@ class Pipeline:
         *,
         correlator: Correlator | None = None,
         runner: PlaybookRunner | None = None,
+        enrichment: EnrichmentService | None = None,
     ) -> None:
         self.store = store
         self.detectors: list[Detector] = list(detectors)
         self.correlator = correlator
         self.runner = runner
+        self.enrichment = enrichment
 
     def ingest(self, event: Event) -> tuple[Event, list[Alert]]:
         """Persist Event → detect → correlate → respond. Returns (event, alerts).
@@ -86,6 +90,13 @@ class Pipeline:
             return
         if incident is None:
             return
+        # Enrich the incident's asset before response, so playbooks and the
+        # analyst see graded context. Best-effort; never blocks the pipeline.
+        if self.enrichment is not None:
+            try:
+                self.enrichment.enrich_incident(incident, self.store)
+            except Exception:  # noqa: BLE001
+                log.exception("enrichment failed on incident %s", incident.id)
         result.incidents.append(incident)
         if self.runner is not None:
             try:
@@ -122,4 +133,5 @@ def build_pipeline(settings: Settings, store: Store) -> Pipeline:
         brute_force_threshold=settings.correlation.brute_force_threshold,
     )
     runner = PlaybookRunner(store, settings)
-    return Pipeline(store, detectors, correlator=correlator, runner=runner)
+    enrichment = build_enrichment(settings)
+    return Pipeline(store, detectors, correlator=correlator, runner=runner, enrichment=enrichment)

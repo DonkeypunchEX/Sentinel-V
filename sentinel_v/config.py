@@ -64,9 +64,16 @@ class GreyNoiseCfg(BaseModel):
     enabled: bool = False
 
 
+class HibpCfg(BaseModel):
+    # Breach/exposure lookups for identifiers and domains you OWN (defensive).
+    api_key_env: str = "HIBP_API_KEY"
+    enabled: bool = False
+
+
 class IntelCfg(BaseModel):
     otx: OtxCfg = Field(default_factory=OtxCfg)
     greynoise: GreyNoiseCfg = Field(default_factory=GreyNoiseCfg)
+    hibp: HibpCfg = Field(default_factory=HibpCfg)
 
 
 class CorrelationCfg(BaseModel):

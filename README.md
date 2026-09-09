@@ -26,7 +26,7 @@ Deception, enrichment and gated response follow per `docs/ROADMAP.md`.
 | ML anomaly detection (reference impl) | 🟢 done | `detection/anomaly.py` + `features.py` + `datasets.py`, real-data only |
 | Ingest pipeline (detectors → correlate → respond) | 🟢 done | `sentinel_v/pipeline.py` |
 | Deception adapters (Cowrie/OpenCanary) | 🟡 stubbed | Phase 2 |
-| Intel enrichment (OTX/GreyNoise/HIBP exposure) | 🟡 stubbed | Phase 3 (next) |
+| Intel enrichment (OTX/GreyNoise/HIBP exposure) | 🟢 done | `intel/`, provenance-tiered, cached, inert without keys |
 | Playbooks (brute-force done; honeypot/C2/rogue-device) | 🟡 1 of 4 | `playbooks/` |
 | Post-quantum / federated / adversarial | 🔴 deferred | Phase 4 stretch, not MVP |
 

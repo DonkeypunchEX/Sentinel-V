@@ -32,7 +32,9 @@ until it's met. Check boxes as you go. Keep `make test` green throughout.
 - **Accept:** an SSH login attempt to the Cowrie container produces a normalized honeypot Event that reaches the store and auto-escalates severity.
 
 ## Phase 3 — Enrich + Correlate + Respond (gated)  🟡 in progress
-- [ ] `intel/enrich.py`: OTX + GreyNoise providers, cached, pluggable
+- [x] `intel/enrich.py`: OTX + GreyNoise + HIBP exposure providers, cached, pluggable,
+  provenance-tiered (Tier/Confidence); enriches incidents in-pipeline; inert without
+  keys (never fabricates intel). (`intel/providers.py`, `tests/test_enrich.py`)
 - [x] Correlation service: dedupe + time/asset grouping → Incidents (`correlation.py`;
   threshold T1110 brute-force, deception auto-escalate; `tests/test_correlation.py`)
 - [x] `response/orchestrator.py`: YAML playbook runner + **approval gate** + **durable**
