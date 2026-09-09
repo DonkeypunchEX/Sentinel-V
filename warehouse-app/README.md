@@ -24,7 +24,7 @@ admin BACKUP export on the JRN screen.
 
 ```bash
 cd warehouse-app/server
-npm ci && npm run build && node server.js   # needs Node 22.5+
+npm ci && npm run build && node server.js   # needs Node 22.13+
 ```
 
 ### Putting it on the internet
