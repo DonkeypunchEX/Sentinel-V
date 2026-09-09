@@ -17,8 +17,8 @@ lint:
 run:
 	$(PY) -m uvicorn sentinel_v.api.app:app --host 127.0.0.1 --port 8787 --reload
 
-validate:  ## Phase 4: run Atomic Red Team procedures, assert detections fire
-	@echo "TODO(Phase 4): wire Atomic Red Team validation (see docs/ROADMAP.md)"
+validate:  ## Replay ATT&CK-tagged attack samples; assert detections fire (exit!=0 on gap)
+	$(PY) -m sentinel_v.validation
 
 docker:
 	docker compose up --build

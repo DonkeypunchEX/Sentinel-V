@@ -1,0 +1,15 @@
+id: ART-T1110-ssh-bruteforce
+name: SSH password brute force (auth.log)
+attack_technique: T1110
+atomic_ref: "T1110.001 — Atomic Red Team: Password Guessing (SSH)"
+# Six failed SSH logins from one source; correlation must escalate to a
+# brute-force Incident (not just per-event noise).
+events:
+  - source: auth.log
+    kind: auth_fail
+    src_ip: 45.83.122.7
+    fields: { service: sshd, user: root }
+    repeat: 6
+expect:
+  incident_technique: T1110
+  min_severity: high

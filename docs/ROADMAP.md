@@ -48,7 +48,12 @@ until it's met. Check boxes as you go. Keep `make test` green throughout.
   step of the chain lands with item above.)
 
 ## Phase 4 — Harden + stretch (only after 0–3 ship)
-- [ ] Purple-team validation: Atomic Red Team procedures mapped to detections; a `make validate` that runs them and asserts detections fire
+- [x] Purple-team validation: ATT&CK-tagged attack samples mapped to Atomic Red Team
+  refs; `make validate` (`python -m sentinel_v.validation`) replays them through the
+  real pipeline and asserts the expected Alert/Incident fires, exiting non-zero on a
+  gap (wired into CI). Replays samples today; running live atomics on a lab host and
+  ingesting the telemetry reuses the same assertions. (`sentinel_v/validation/`,
+  `validation/scenarios/`, `tests/test_validation.py`)
 - [ ] Supply chain: pip-audit + SBOM (syft) + grype in CI; pin + Dependabot
 - [ ] (stretch) ART adversarial testing of the anomaly detector
 - [ ] (stretch) Inter-node mTLS with hybrid PQC (oqs-python) — only if multi-node

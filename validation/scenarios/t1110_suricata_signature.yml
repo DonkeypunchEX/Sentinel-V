@@ -1,0 +1,17 @@
+id: ART-T1110-suricata-signature
+name: Suricata IDS brute-force/scan signature
+attack_technique: T1110
+atomic_ref: "T1110 — IDS coverage: ET SCAN SSH brute force signature"
+# A Suricata EVE alert whose signature indicates brute force → the Sigma rule
+# must fire a rules.sigma alert tagged T1110.
+events:
+  - source: suricata.eve
+    kind: alert
+    src_ip: 45.83.122.7
+    dst_ip: 10.0.0.10
+    fields:
+      alert: { signature: "ET SCAN Potential SSH Scan / Brute Force" }
+      dest_port: 22
+expect:
+  alert_detector: rules.sigma
+  alert_technique: T1110

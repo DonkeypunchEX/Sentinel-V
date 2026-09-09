@@ -28,6 +28,8 @@ Deception, enrichment and gated response follow per `docs/ROADMAP.md`.
 | Deception adapters (Cowrie/OpenCanary) | 🟡 stubbed | Phase 2 |
 | Intel enrichment (OTX/GreyNoise/HIBP exposure) | 🟢 done | `intel/`, provenance-tiered, cached, inert without keys |
 | Playbooks (brute-force done; honeypot/C2/rogue-device) | 🟡 1 of 4 | `playbooks/` |
+| Purple-team validation (`make validate`, ATT&CK-mapped) | 🟢 done | `sentinel_v/validation/`, CI-gated, proves detections fire |
+| `sentinel-v` CLI (`fit`, `serve`) | 🟢 done | `sentinel_v/cli.py` |
 | Post-quantum / federated / adversarial | 🔴 deferred | Phase 4 stretch, not MVP |
 
 ## Quick start

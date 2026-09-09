@@ -17,4 +17,5 @@ jobs:
       - run: ruff check sentinel_v tests
       - run: mypy sentinel_v
       - run: pytest -q
+      - run: python -m sentinel_v.validation   # detection coverage; fails CI on a gap
       - run: pip-audit || true   # Phase 4: make this blocking
