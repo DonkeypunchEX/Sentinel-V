@@ -26,6 +26,7 @@ Playbook YAML shape (see playbooks/brute_force.yml):
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,8 @@ from sentinel_v.models import Action, Incident, Severity
 from sentinel_v.response.actions import make_block_ip, notify
 from sentinel_v.response.orchestrator import Orchestrator
 from sentinel_v.storage import Store
+
+log = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {s: i for i, s in enumerate(
     [Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
@@ -60,10 +63,28 @@ class Playbook:
             return False
         min_sev = self.trigger.get("min_severity")
         if min_sev is not None:
-            want = _SEVERITY_ORDER.get(Severity(str(min_sev).lower()), 0)
+            try:
+                want = _SEVERITY_ORDER[Severity(str(min_sev).lower())]
+            except ValueError:
+                return False  # tolerate a bad value at match time (also rejected at load)
             if _SEVERITY_ORDER.get(incident.severity, 0) < want:
                 return False
         return True
+
+
+def _valid_min_severity(trigger: dict[str, Any]) -> bool:
+    min_sev = trigger.get("min_severity")
+    if min_sev is None:
+        return True
+    try:
+        Severity(str(min_sev).lower())
+        return True
+    except ValueError:
+        return False
+
+
+def _valid_steps(steps: list[Any]) -> bool:
+    return all(isinstance(s, dict) and s.get("action") for s in steps)
 
 
 def load_playbooks(playbooks_dir: str | Path) -> list[Playbook]:
@@ -76,17 +97,30 @@ def load_playbooks(playbooks_dir: str | Path) -> list[Playbook]:
             continue
         try:
             doc = yaml.safe_load(f.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
+        except (yaml.YAMLError, OSError):
             continue
-        if isinstance(doc, dict) and doc.get("name") and isinstance(doc.get("steps"), list):
-            playbooks.append(
-                Playbook(
-                    name=str(doc["name"]),
-                    description=str(doc.get("description", "")),
-                    trigger=dict(doc.get("trigger") or {}),
-                    steps=list(doc["steps"]),
-                )
+        if not (isinstance(doc, dict) and doc.get("name") and isinstance(doc.get("steps"), list)):
+            continue
+        trigger = dict(doc.get("trigger") or {})
+        steps = list(doc["steps"])
+        # Reject a misconfigured playbook once, loudly — rather than letting it
+        # raise inside run_for_incident, where the pipeline would swallow it and
+        # silently skip containment for every incident.
+        if not _valid_min_severity(trigger):
+            log.warning("playbook %s: invalid trigger.min_severity; skipping", doc["name"])
+            continue
+        if not _valid_steps(steps):
+            log.warning("playbook %s: a step is not a mapping with an 'action'; skipping",
+                        doc["name"])
+            continue
+        playbooks.append(
+            Playbook(
+                name=str(doc["name"]),
+                description=str(doc.get("description", "")),
+                trigger=trigger,
+                steps=steps,
             )
+        )
     return playbooks
 
 

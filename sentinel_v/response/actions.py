@@ -10,6 +10,7 @@ D3FEND: block_ip → Network Traffic Filtering; notify → alerting/handoff.
 from __future__ import annotations
 
 import logging
+from ipaddress import ip_address
 from pathlib import Path
 
 from sentinel_v.models import Action, Incident
@@ -40,6 +41,11 @@ def make_block_ip(block_list_path: str | Path):
         ip = str(action.detail.get("src_ip") or incident.detail.get("src_ip") or "").strip()
         if not ip or ip == "unknown":
             raise ValueError("block_ip requires a resolved src_ip on the incident")
+        # Never interpolate an unvalidated token into a firewall rule.
+        try:
+            ip = str(ip_address(ip))
+        except ValueError as exc:
+            raise ValueError(f"block_ip refuses a non-IP src_ip: {ip!r}") from exc
         rule = f"add element inet filter blocklist {{ {ip} }}"
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []

@@ -46,9 +46,18 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     uvicorn.run(
         "sentinel_v.api.app:app",
         host=args.host or settings.api_host,
-        port=args.port or settings.api_port,
+        # Distinguish "omitted" from an explicit 0 (Uvicorn ephemeral port).
+        port=settings.api_port if args.port is None else args.port,
     )
     return 0
+
+
+def _contamination(value: str) -> float:
+    """argparse type: IsolationForest accepts a float in (0, 0.5]."""
+    parsed = float(value)
+    if not 0 < parsed <= 0.5:
+        raise argparse.ArgumentTypeError("contamination must be > 0 and <= 0.5")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     fit = sub.add_parser("fit", help="fit the anomaly model on a CIC-IDS2017 baseline")
     fit.add_argument("--dataset", required=True, help="path to a CIC-IDS2017 flow CSV")
     fit.add_argument("--model-path", default=None, help="output model path (else config)")
-    fit.add_argument("--contamination", type=float, default=0.02)
+    fit.add_argument("--contamination", type=_contamination, default=0.02)
     fit.add_argument("--limit", type=int, default=None, help="cap number of baseline rows")
     fit.set_defaults(func=_cmd_fit)
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import fnmatch
 import ipaddress
+import logging
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
@@ -32,6 +33,8 @@ import yaml
 
 from sentinel_v.detection.base import Detector
 from sentinel_v.models import Alert, Event, Severity
+
+log = logging.getLogger(__name__)
 
 _LEVEL_TO_SEVERITY = {
     "informational": Severity.INFO,
@@ -63,6 +66,11 @@ class SigmaRule:
         self._selections: dict[str, Any] = {
             k: v for k, v in detection.items() if k != "condition"
         }
+        # Validate the condition grammar now, at load time: evaluate it against
+        # all-false selections. A malformed condition raises ValueError here, so
+        # SigmaRuleDetector.load() skips this rule instead of it blowing up per
+        # event at detect time (which would silently disable the whole detector).
+        _eval_condition(self._condition, dict.fromkeys(self._selections, False))
 
     @property
     def severity(self) -> Severity:
@@ -103,10 +111,15 @@ class SigmaRuleDetector(Detector):
             if path.suffix.lower() not in {".yml", ".yaml"}:
                 continue
             try:
-                for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                log.warning("skipping unreadable rule file %s", path)
+                continue
+            try:
+                for doc in yaml.safe_load_all(text):
                     if isinstance(doc, dict) and doc.get("detection"):
                         self.rules.append(SigmaRule(doc, source=path))
-            except (yaml.YAMLError, ValueError):
+            except (yaml.YAMLError, ValueError, UnicodeDecodeError):
                 continue
 
     def detect(self, events: Iterable[Event]) -> Iterator[Alert]:
@@ -279,6 +292,8 @@ class _ConditionParser:
         return self._t[self._i] if self._i < len(self._t) else None
 
     def _next(self) -> str:
+        if self._i >= len(self._t):
+            raise ValueError("unexpected end of condition")
         tok = self._t[self._i]
         self._i += 1
         return tok

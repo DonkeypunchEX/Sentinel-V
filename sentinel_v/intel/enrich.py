@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING
 
@@ -100,10 +101,28 @@ class Enricher(ABC):
 class EnrichmentService:
     """Runs a set of enrichers with a small TTL cache and aggregates results."""
 
-    def __init__(self, enrichers: list[Enricher], *, ttl_seconds: int = 3600) -> None:
+    def __init__(
+        self,
+        enrichers: list[Enricher],
+        *,
+        ttl_seconds: int = 3600,
+        max_entries: int = 10_000,
+    ) -> None:
         self.enrichers = enrichers
         self.ttl = ttl_seconds
-        self._cache: dict[tuple[str, str, str], tuple[float, Enrichment]] = {}
+        self.max_entries = max_entries
+        # Bounded + self-purging: the key includes the incident src_ip, which is
+        # attacker-controlled on the ingest path, so an unbounded dict would grow
+        # under a spoofed-source flood.
+        self._cache: OrderedDict[tuple[str, str, str], tuple[float, Enrichment]] = OrderedDict()
+
+    def _store_cached(self, key: tuple[str, str, str], now: float, result: Enrichment) -> None:
+        for k in [k for k, (t, _) in self._cache.items() if now - t >= self.ttl]:
+            del self._cache[k]
+        self._cache[key] = (now, result)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self.max_entries:
+            self._cache.popitem(last=False)
 
     def enrich_indicator(self, indicator: str, kind: str = "ip") -> list[Enrichment]:
         out: list[Enrichment] = []
@@ -116,7 +135,7 @@ class EnrichmentService:
                 continue
             result = e.enrich(indicator, kind)
             if result is not None:
-                self._cache[key] = (now, result)
+                self._store_cached(key, now, result)
                 out.append(result)
         # Strongest provenance first.
         return sorted(out, key=lambda r: (r.tier, r.confidence != Confidence.HIGH))

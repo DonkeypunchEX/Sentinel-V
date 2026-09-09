@@ -15,11 +15,14 @@ detection:
     source: suricata.eve
     kind: alert
   keywords:
+    # Phrases that carry brute-force / scan intent. Bare "SSH" or "Login" are
+    # deliberately excluded — they match benign protocol/policy signatures and
+    # would spawn false HIGH T1110 incidents (list values combine with OR).
     alert.signature|contains:
       - Brute Force
-      - SSH
+      - Bruteforce
+      - Password Guess
       - SCAN
-      - Login
   condition: selection and keywords
 falsepositives:
   - Security scanners you operate yourself; allowlist their source IPs.

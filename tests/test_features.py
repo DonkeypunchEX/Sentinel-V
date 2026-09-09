@@ -49,3 +49,18 @@ def test_cic_loader_filters_benign(tmp_path):
 def test_cic_loader_refuses_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         list(load_cic_ids2017_benign(tmp_path / "absent.csv"))
+
+
+def test_cic_loader_refuses_missing_label_column(tmp_path):
+    # Without a Label column we can't tell benign from attack — must not fit.
+    csv = tmp_path / "nolabel.csv"
+    csv.write_text(" Destination Port, Flow Duration\n443,1000\n")
+    with pytest.raises(ValueError):
+        list(load_cic_ids2017_benign(csv))
+
+
+def test_cic_loader_converts_duration_to_seconds(tmp_path):
+    csv = tmp_path / "cic.csv"
+    csv.write_text(" Destination Port, Flow Duration, Label\n443,2000000,BENIGN\n")
+    [event] = list(load_cic_ids2017_benign(csv))
+    assert event.fields["duration_s"] == 2.0  # 2,000,000 µs → 2 s

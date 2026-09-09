@@ -1,6 +1,8 @@
 """Item 6: the purple-team validation suite must be green (detections fire)."""
 from __future__ import annotations
 
+import pytest
+
 from sentinel_v.validation.harness import load_scenarios, run_all
 
 
@@ -15,3 +17,10 @@ def test_all_scenarios_pass():
     assert results, "no scenarios found"
     failed = [(r.scenario.id, r.reason) for r in results if not r.passed]
     assert not failed, f"detection gaps: {failed}"
+
+
+def test_scenario_without_assertion_is_rejected(tmp_path):
+    # An empty scenario would otherwise PASS vacuously and hide a gap.
+    (tmp_path / "empty.yml").write_text("{}\n")
+    with pytest.raises(ValueError):
+        load_scenarios(tmp_path)

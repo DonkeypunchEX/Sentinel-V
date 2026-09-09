@@ -13,6 +13,7 @@ to in-memory lists (fine for unit tests).
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Lock
 
 from sentinel_v.models import Action, Incident
 from sentinel_v.storage import Store
@@ -31,6 +32,7 @@ class Orchestrator:
         self._store = store
         self._pending: list[Action] = []  # in-memory fallback when no store
         self._audit: list[Action] = []
+        self._approve_lock = Lock()  # serialize approvals within this process
 
     def register(self, name: str, handler: ActionHandler) -> None:
         self._handlers[name] = handler
@@ -50,12 +52,17 @@ class Orchestrator:
         return action
 
     def approve(self, action_id: str, approver: str, incident: Incident) -> Action:
-        action = self._get_pending(action_id)
-        if action is None:
-            raise KeyError(f"No pending action {action_id}")
-        action.approved = True
-        action.approver = approver
-        return self.run(action, incident)
+        # Serialize approvals in-process so two concurrent requests can't both
+        # read the same pending action and double-execute the handler. A full
+        # cross-process claim (a transactional in-progress state in the store)
+        # is the next step for a multi-worker deployment.
+        with self._approve_lock:
+            action = self._get_pending(action_id)
+            if action is None:
+                raise KeyError(f"No pending action {action_id}")
+            action.approved = True
+            action.approver = approver
+            return self.run(action, incident)
 
     # ------------------------------------------------------------------ #
     def _persist(self, action: Action) -> None:

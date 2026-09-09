@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sentinel_v.models import Alert, Event, Incident, Severity
 from sentinel_v.storage import Store
@@ -77,6 +77,7 @@ class Correlator:
         bucket = self._buckets[key]
         self._prune(bucket, alert)
         bucket.hits.append((alert.ts, alert.id))
+        self._sweep(alert.ts)  # amortized cleanup of stale attacker-keyed buckets
 
         if len(bucket.hits) < self.threshold:
             return None
@@ -100,6 +101,22 @@ class Correlator:
         # If the previously-open incident's window has fully elapsed, start fresh.
         if not bucket.hits:
             bucket.incident_id = None
+
+    def _sweep(self, now: datetime) -> None:
+        """Drop buckets with no in-window hits and no open incident.
+
+        ``src_ip`` is caller-supplied on the ingest path, so without this a
+        spoofed-source flood would grow ``_buckets`` without bound. Runs only on
+        the threshold path, so its cost is amortized.
+        """
+        cutoff = now - self.window
+        stale = [
+            k
+            for k, b in self._buckets.items()
+            if b.incident_id is None and not any(ts >= cutoff for ts, _ in b.hits)
+        ]
+        for k in stale:
+            del self._buckets[k]
 
     def _open_or_update(
         self,

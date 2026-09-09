@@ -71,6 +71,9 @@ def flow_features(event: Event) -> Sequence[float]:
     bwd_bytes = pick("bwd_bytes", flow.get("bytes_toclient"))
     fwd_pkts = pick("fwd_pkts", flow.get("pkts_toserver"))
     bwd_pkts = pick("bwd_pkts", flow.get("pkts_toclient"))
+    # duration_s is defined in SECONDS for every producer. Suricata flow.age is
+    # already seconds; the CIC-IDS2017 loader converts its microseconds to
+    # seconds before it ever reaches this slot (see detection/datasets.py).
     duration = pick("duration_s", flow.get("age"))
     dst_port = pick("dst_port", f.get("dest_port"))
     proto = _proto_code(f.get("proto")) if "proto" in f else 0.0

@@ -47,13 +47,27 @@ def load_cic_ids2017_benign(csv_path: str | Path, *, limit: int | None = None) -
         reader = csv.DictReader(fh)
         header_map = _build_header_map(reader.fieldnames or [])
         label_col = _find_label_column(reader.fieldnames or [])
+        if label_col is None:
+            # Refuse to fit on unlabeled rows: without a Label column we cannot
+            # tell benign from attack traffic, and letting attacks into the
+            # baseline would quietly poison the model. Same loud posture as a
+            # missing file.
+            raise ValueError(
+                f"No 'Label' column in {path}; refusing to fit on unlabeled rows "
+                "(attack traffic would enter the benign baseline)."
+            )
         for row in reader:
-            if label_col is not None and str(row.get(label_col, "")).strip().upper() != "BENIGN":
+            if str(row.get(label_col, "")).strip().upper() != "BENIGN":
                 continue
             fields: dict[str, object] = {
                 canonical: _to_number(row.get(original))
                 for original, canonical in header_map.items()
             }
+            # CIC-IDS2017 records flow duration in MICROSECONDS; the live
+            # Suricata extractor uses seconds. Normalize to seconds so the model
+            # fits and scores on the same unit (see detection/features.py).
+            if "duration_s" in fields:
+                fields["duration_s"] = _to_number(fields["duration_s"]) / 1_000_000.0
             yield Event(source="dataset.cic-ids2017", kind="flow", fields=fields)
             count += 1
             if limit is not None and count >= limit:

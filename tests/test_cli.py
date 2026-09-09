@@ -44,3 +44,20 @@ def test_fit_trains_and_persists_model(tmp_path):
 def test_fit_missing_dataset_errors(tmp_path):
     with pytest.raises(FileNotFoundError):
         main(["fit", "--dataset", str(tmp_path / "nope.csv"), "--model-path", str(tmp_path / "m")])
+
+
+@pytest.mark.parametrize("bad", ["0", "0.6", "1.0", "-0.1"])
+def test_fit_rejects_out_of_range_contamination(tmp_path, bad):
+    csv = tmp_path / "cic.csv"
+    _write_cic(csv)
+    with pytest.raises(SystemExit):  # argparse rejects the type before running
+        main(["fit", "--dataset", str(csv), "--model-path", str(tmp_path / "m"),
+              "--contamination", bad])
+
+
+def test_fit_accepts_boundary_contamination(tmp_path):
+    csv = tmp_path / "cic.csv"
+    model = tmp_path / "m.joblib"
+    _write_cic(csv)
+    assert main(["fit", "--dataset", str(csv), "--model-path", str(model),
+                 "--contamination", "0.5"]) == 0

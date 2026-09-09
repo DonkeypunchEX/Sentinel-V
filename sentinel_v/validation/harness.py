@@ -19,6 +19,9 @@ _SEV_ORDER = {s: i for i, s in enumerate(
 
 DEFAULT_SCENARIOS_DIR = Path("validation/scenarios")
 
+# A scenario must assert at least one of these, or it would pass vacuously.
+_SUPPORTED_EXPECTATIONS = {"incident_technique", "alert_detector"}
+
 
 @dataclass
 class Scenario:
@@ -58,6 +61,14 @@ def load_scenarios(scenarios_dir: str | Path = DEFAULT_SCENARIOS_DIR) -> list[Sc
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
         if not isinstance(doc, dict):
             continue
+        expect = dict(doc.get("expect") or {})
+        # A scenario with no assertion would vacuously PASS and hide a detection
+        # gap. Refuse it loudly instead.
+        if not _SUPPORTED_EXPECTATIONS & set(expect):
+            raise ValueError(
+                f"scenario '{doc.get('id', f.stem)}' ({f.name}) has no supported "
+                f"expectation; declare one of {sorted(_SUPPORTED_EXPECTATIONS)}"
+            )
         scenarios.append(
             Scenario(
                 id=str(doc.get("id", f.stem)),
@@ -65,7 +76,7 @@ def load_scenarios(scenarios_dir: str | Path = DEFAULT_SCENARIOS_DIR) -> list[Sc
                 attack_technique=doc.get("attack_technique"),
                 atomic_ref=str(doc.get("atomic_ref", "")),
                 events=list(doc.get("events") or []),
-                expect=dict(doc.get("expect") or {}),
+                expect=expect,
             )
         )
     return scenarios

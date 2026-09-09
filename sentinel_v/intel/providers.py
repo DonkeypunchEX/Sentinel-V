@@ -12,6 +12,7 @@ Concept map (docs/RND.md, PLAYBOOKS.md):
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 
 from sentinel_v.config import Settings
@@ -27,6 +28,12 @@ class GreyNoiseEnricher(Enricher):
 
     def lookup(self, indicator: str, kind: str = "ip") -> dict[str, object]:
         if kind != "ip":
+            return {}
+        # Validate before building the URL: src_ip is caller-supplied on the
+        # ingest path, and characters like '/' or '?' would rewrite the request.
+        try:
+            ipaddress.ip_address(indicator)
+        except ValueError:
             return {}
         import requests
 

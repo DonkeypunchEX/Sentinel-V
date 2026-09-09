@@ -143,7 +143,16 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     yaml_path = Path(path) if path is not None else Path(
         os.environ.get("SENTINEL_CONFIG", str(DEFAULT_CONFIG_PATH))
     )
-    # YamlConfigSettingsSource reads the path from model_config; a missing file
-    # yields an empty mapping rather than an error.
-    Settings.model_config["yaml_file"] = str(yaml_path) if yaml_path.exists() else None
-    return Settings()
+    if not yaml_path.exists():
+        return Settings()
+
+    # Scope the yaml_file to THIS call via a subclass rather than mutating the
+    # shared Settings.model_config — otherwise concurrent loads of different
+    # files would race on one class-level path. YamlConfigSettingsSource reads
+    # yaml_file from the (sub)class's model_config.
+    class _Scoped(Settings):
+        model_config = SettingsConfigDict(
+            **{**Settings.model_config, "yaml_file": str(yaml_path)}
+        )
+
+    return _Scoped()

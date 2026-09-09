@@ -98,3 +98,15 @@ def test_malformed_rule_is_skipped_not_fatal(tmp_path):
 def test_bundled_rules_load():
     det = SigmaRuleDetector(Path("rules"))
     assert len(det.rules) >= 2
+
+
+def test_malformed_condition_skipped_at_load(tmp_path):
+    # A truncated aggregation ("1 of") must be rejected at load, not blow up per
+    # event (which would silently disable the whole detector).
+    _write(tmp_path, "ok.yml", "title: OK\ndetection:\n  sel: { kind: flow }\n  condition: sel\n")
+    _write(tmp_path, "bad.yml",
+           "title: BAD\ndetection:\n  sel: { kind: flow }\n  condition: 1 of\n")
+    det = SigmaRuleDetector(tmp_path)
+    assert [r.title for r in det.rules] == ["OK"]
+    # And the good rule still evaluates without raising.
+    assert len(list(det.detect([Event(source="s", kind="flow")]))) == 1
