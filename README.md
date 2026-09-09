@@ -45,9 +45,12 @@ curl -s localhost:8787/alerts    # the T1110 rule alert this just fired
 curl -s localhost:8787/metrics   # table counts + loaded detectors
 ```
 The ML detector joins the pipeline once a fitted model exists at
-`model_path` (config); fit it on a real baseline (CIC-IDS2017 benign rows via
-`detection/datasets.py`, or your own capture) — it will not train on synthetic
-data.
+`model_path` (config). Fit it on a real baseline (it will not train on
+synthetic data):
+```bash
+sentinel-v fit --dataset /path/to/CIC-IDS2017-benign.csv   # persists model_path
+sentinel-v serve                                           # = make run
+```
 
 ## Also in this repo
 `warehouse-app/` is a separate, self-hosted warehouse inventory system
