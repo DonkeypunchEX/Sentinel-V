@@ -54,11 +54,6 @@ sentinel-v fit --dataset /path/to/CIC-IDS2017-benign.csv   # persists model_path
 sentinel-v serve                                           # = make run
 ```
 
-## Also in this repo
-`warehouse-app/` is a separate, self-hosted warehouse inventory system
-(**WHSE-01**, Node) with its own toolchain and CI path; it is unrelated to the
-Sentinel-V Python framework and lives alongside it.
-
 ## Design in one breath
 Deception is the highest-fidelity sensor (near-zero false positives); rules
 catch known TTPs; ML catches the unknowns; response is **gated and reversible**

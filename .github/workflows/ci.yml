@@ -1,11 +1,5 @@
 name: ci
-# warehouse-app/ is a separate Node project with its own toolchain; this
-# workflow gates the Sentinel-V Python framework only.
-on:
-  push:
-    paths-ignore: ['warehouse-app/**']
-  pull_request:
-    paths-ignore: ['warehouse-app/**']
+on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
