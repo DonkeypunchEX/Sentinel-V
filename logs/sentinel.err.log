@@ -1,0 +1,4 @@
+INFO:root:Initializing Sentinel-V System [52f3b611113abea2]
+INFO:root:Activating production defenses
+INFO:root:Sentinel-V System ready (Mode: production, Level: standard)
+WARNING:root:Reduced defense level due to resource constraints
