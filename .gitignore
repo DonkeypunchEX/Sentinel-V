@@ -12,3 +12,5 @@ venv/
 .venv/
 honeypot.log
 sbom.json
+
+logs/
