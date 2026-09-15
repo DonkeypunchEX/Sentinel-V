@@ -43,7 +43,7 @@ never imports them): `ml` (scikit-learn detector, federated learning),
 git clone https://github.com/DonkeypunchEX/Sentinel-V.git
 cd Sentinel-V
 pip install -e ".[dev,cli]"   # Python 3.10+
-pytest tests/                 # 32 tests
+pytest tests/                 # 39 tests
 python examples/basic_usage.py
 ```
 
@@ -87,6 +87,23 @@ WSL required), use the equivalent script:
 .\scripts\deploy.ps1 status
 .\scripts\deploy.ps1 stop
 ```
+
+For an interactive front end instead of remembering flags, run:
+
+```powershell
+.\scripts\sentinel-ui.ps1
+```
+
+A menu-driven console UI over the same `sentinel-v` CLI and
+`deploy.ps1` lifecycle commands — status, start/stop/restart, analyze
+an events file (with a summary table), deploy decoys, validate a
+config, export the SBOM, run tests, and a live log tail. It wraps
+existing commands only; it does not add any new capability to the
+Python package. Note that `status` (in the UI or the CLI) reflects a
+fresh, short-lived `SentinelVSystem` instance, not live counters from
+a running background process — the CLI has no daemon/IPC layer, so
+there is currently no way to see real-time metrics from an already
+running `start` process.
 
 ### Standalone executable
 

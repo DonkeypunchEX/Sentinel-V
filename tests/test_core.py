@@ -60,6 +60,25 @@ def test_decoy_interaction_is_flagged(system: SentinelVSystem) -> None:
     assert assessment["is_decoy_interaction"] is True
 
 
+def test_benign_decoy_contact_still_escalates(system: SentinelVSystem) -> None:
+    # A single, otherwise unremarkable request scores BENIGN on its own —
+    # but any contact with a decoy has no legitimate explanation, so it
+    # must still escalate through the response engine.
+    decoy = system.deception_net.decoys[0]
+    event = {
+        "source_ip": "8.8.8.8",
+        "dest_ip": decoy,
+        "dest_port": 443,
+        "protocol": "tcp",
+    }
+    assessment = system.process_event(event)
+    assert assessment["threat_level"] == "BENIGN"
+    assert assessment["is_decoy_interaction"] is True
+    assert "response_executed" in assessment
+    assert assessment["response_details"]["escalation_step"] >= 1
+    assert system.metrics.threats_detected == 1
+
+
 def test_sustained_scan_escalates_to_critical_and_shares(
     system: SentinelVSystem,
 ) -> None:
@@ -89,6 +108,46 @@ def test_external_ip_classification(system: SentinelVSystem) -> None:
     assert system._is_external_ip("192.168.0.9") is False
     assert system._is_external_ip("127.0.0.1") is False
     assert system._is_external_ip("not-an-ip") is True
+
+
+def test_external_ip_classification_ipv6(system: SentinelVSystem) -> None:
+    assert system._is_external_ip("2001:4860:4860::8888") is True  # public
+    assert system._is_external_ip("::1") is False  # loopback
+    assert system._is_external_ip("fc00::1") is False  # unique local
+    assert system._is_external_ip("fe80::1") is False  # link-local
+
+
+def test_external_ip_classification_link_local(system: SentinelVSystem) -> None:
+    assert system._is_external_ip("169.254.1.5") is False
+    assert system._is_external_ip("169.254.255.255") is False
+
+
+def test_external_ip_classification_cgnat(system: SentinelVSystem) -> None:
+    # 100.64.0.0/10 (RFC 6598 shared address space / carrier-grade NAT)
+    assert system._is_external_ip("100.64.0.1") is False
+    assert system._is_external_ip("100.100.0.1") is False
+    assert system._is_external_ip("100.127.255.255") is False
+    # just outside the /10 on either side stays external
+    assert system._is_external_ip("100.63.255.255") is True
+    assert system._is_external_ip("100.128.0.0") is True
+
+
+def test_external_ip_classification_multicast(system: SentinelVSystem) -> None:
+    assert system._is_external_ip("224.0.0.1") is False  # IPv4 multicast
+    assert system._is_external_ip("239.255.255.250") is False  # SSDP
+    assert system._is_external_ip("ff02::1") is False  # IPv6 multicast
+
+
+def test_normalize_ip_handles_ipv6_loopback(system: SentinelVSystem) -> None:
+    assert system._normalize_ip("::1") == "::1"
+    # fully expanded form collapses to the canonical compressed form
+    assert system._normalize_ip("0:0:0:0:0:0:0:1") == "::1"
+
+
+def test_normalize_ip_passes_through_invalid_input(system: SentinelVSystem) -> None:
+    assert system._normalize_ip("not-an-ip") == "not-an-ip"
+    assert system._normalize_ip("") == ""
+    assert system._normalize_ip("999.999.999.999") == "999.999.999.999"
 
 
 def test_status_report_structure(system: SentinelVSystem) -> None:

@@ -4,6 +4,7 @@ Sentinel-V Core System
 Main orchestrator for the autonomous defense framework
 """
 
+import ipaddress
 import json
 import time
 import threading
@@ -74,6 +75,23 @@ class SentinelVSystem:
     Main orchestrator for the Sentinel-V defense system
     Coordinates all components and provides unified interface
     """
+
+    # Address ranges treated as "internal" when classifying an event's
+    # source IP. Deliberately narrower than ipaddress's built-in
+    # is_private, which also lumps in documentation/test-net ranges
+    # (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) — this codebase's
+    # tests use those ranges to stand in for real external attacker IPs.
+    _INTERNAL_NETWORKS = (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("127.0.0.0/8"),
+        ipaddress.ip_network("169.254.0.0/16"),  # link-local
+        ipaddress.ip_network("100.64.0.0/10"),  # CGNAT shared space (RFC 6598)
+        ipaddress.ip_network("::1/128"),  # loopback
+        ipaddress.ip_network("fc00::/7"),  # unique local address
+        ipaddress.ip_network("fe80::/10"),  # link-local
+    )
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or self._load_default_config()
@@ -259,7 +277,10 @@ class SentinelVSystem:
             self.event_log.append(assessment)
 
             # 6. If threat detected, handle response
-            if threat_level.value >= 2:  # MALICIOUS or higher
+            # Decoy contact always warrants a response, even when the
+            # underlying feature score alone reads BENIGN/SUSPICIOUS —
+            # legitimate traffic has no reason to touch a decoy.
+            if threat_level.value >= 2 or is_decoy:  # MALICIOUS+ or decoy hit
                 self.threat_log.append(assessment)
                 self.metrics.threats_detected += 1
 
@@ -312,26 +333,35 @@ class SentinelVSystem:
         return validated
 
     def _normalize_ip(self, ip: str) -> str:
-        """Normalize IP address format"""
+        """Normalize IP address to its canonical string form.
+
+        Unparseable input (including "" and non-IP hostnames other than
+        "localhost") is passed through unchanged rather than raising, since
+        the caller must not let a malformed event field crash the pipeline.
+        """
         if ip == "localhost":
             return "127.0.0.1"
-        return ip
+        try:
+            return str(ipaddress.ip_address(ip))
+        except ValueError:
+            return ip
 
     def _is_external_ip(self, ip: str) -> bool:
-        """Check if IP is external (non-RFC1918)"""
+        """Check if IP is external (outside the trusted/internal address space).
+
+        Unparseable input is treated as external so it still passes through
+        the deception-network and threat-matrix checks rather than being
+        silently trusted.
+        """
         try:
-            octets = list(map(int, ip.split(".")))
-            if octets[0] == 10:
-                return False
-            elif octets[0] == 172 and 16 <= octets[1] <= 31:
-                return False
-            elif octets[0] == 192 and octets[1] == 168:
-                return False
-            elif ip.startswith("127."):
-                return False
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
             return True
-        except (ValueError, IndexError):
-            return True
+
+        if addr.is_multicast:
+            return False
+
+        return not any(addr in network for network in self._INTERNAL_NETWORKS)
 
     def _generate_event_id(self) -> str:
         """Generate unique event identifier"""
