@@ -15,6 +15,8 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List
 
+from .paths import honeypot_log_file
+
 
 class DeceptionNetwork:
     """Manages decoy endpoints and detects interactions with them."""
@@ -104,7 +106,7 @@ class DynamicHoneypot:
             self.host_key = paramiko.RSAKey.from_private_key_file(key_file)
         else:
             self.host_key = paramiko.RSAKey.generate(2048)
-        logging.basicConfig(filename="honeypot.log", level=logging.INFO)
+        logging.basicConfig(filename=str(honeypot_log_file()), level=logging.INFO)
 
     def handle_client(self, client: Any, addr: Any) -> None:  # pragma: no cover
         """Complete a fake SSH handshake and log what the client sends."""

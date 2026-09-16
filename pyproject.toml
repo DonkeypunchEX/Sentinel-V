@@ -55,9 +55,8 @@ quantum = ["liboqs-python>=0.10.0"]
 build = ["pyinstaller>=6.0"]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sentinel-v-cyber-defense"
-Documentation = "https://sentinel-v.readthedocs.io"
-Repository = "https://github.com/yourusername/sentinel-v-cyber-defense"
+Homepage = "https://github.com/DonkeypunchEX/Sentinel-V"
+Repository = "https://github.com/DonkeypunchEX/Sentinel-V"
 Issues = "https://github.com/yourusername/sentinel-v-cyber-defense/issues"
 Changelog = "https://github.com/yourusername/sentinel-v-cyber-defense/releases"
 

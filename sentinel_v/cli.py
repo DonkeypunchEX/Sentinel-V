@@ -5,12 +5,19 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import click
 import yaml
 
 from .core import SystemMode, create_sentinel_system
+from .paths import main_log_file, status_file
+
+# A running daemon's monitor thread refreshes the heartbeat every 30s
+# (retrying after 60s on error) - anything older than this is treated as
+# a crashed or killed process rather than a live one.
+HEARTBEAT_STALE_SECONDS = 90
 
 
 @click.group()
@@ -35,14 +42,19 @@ def cli() -> None:
 )
 def start(config: Optional[str], mode: str, log_level: str) -> None:
     """Start the Sentinel-V system and run until interrupted."""
-    logging.basicConfig(level=getattr(logging, log_level))
+    log_path = main_log_file()
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        handlers=[logging.StreamHandler(), logging.FileHandler(str(log_path))],
+    )
 
-    sentinel = create_sentinel_system(config)
+    sentinel = create_sentinel_system(config, write_status_file=True)
     sentinel.mode = SystemMode(mode)
 
     click.echo(f"Sentinel-V system started (ID: {sentinel.system_id})")
     click.echo(f"   Mode: {mode}")
     click.echo(f"   Defense Level: {sentinel.defense_level.value}")
+    click.echo(f"   Log file: {log_path}")
 
     try:
         while True:
@@ -75,15 +87,47 @@ def analyze(event_file: str, output: Optional[str]) -> None:
 
 @cli.command()
 def status() -> None:
-    """Show system status."""
-    sentinel = create_sentinel_system()
-    status_info = sentinel.get_system_status()
-    sentinel.shutdown()
+    """Show system status.
+
+    Reads the heartbeat file a running `sentinel-v start` daemon publishes.
+    This process never contacts that daemon directly, so if no heartbeat
+    is found (or it's stale) that is reported plainly rather than showing
+    a freshly-created, empty system's all-zero metrics as if they were
+    live.
+    """
+    heartbeat = status_file()
+
+    if not heartbeat.exists():
+        click.echo("Sentinel-V is not running (no active daemon found)")
+        click.echo(f"   Checked: {heartbeat}")
+        return
+
+    try:
+        status_info = json.loads(heartbeat.read_text())
+    except (OSError, ValueError):
+        click.echo("Sentinel-V is not running (heartbeat file unreadable)")
+        return
+
+    last_updated = status_info.get("last_updated")
+    age_seconds: Optional[float] = None
+    if last_updated:
+        try:
+            age_seconds = (
+                datetime.now() - datetime.fromisoformat(last_updated)
+            ).total_seconds()
+        except ValueError:
+            age_seconds = None
+
+    if age_seconds is None or age_seconds > HEARTBEAT_STALE_SECONDS:
+        click.echo("Sentinel-V is not running (stale heartbeat - process likely died)")
+        click.echo(f"   Last seen: {last_updated or 'unknown'}")
+        return
 
     click.echo("Sentinel-V System Status")
     click.echo("=" * 40)
     click.echo(f"System ID: {status_info['system_id']}")
     click.echo(f"Status: {status_info['status']}")
+    click.echo(f"PID: {status_info.get('pid', 'unknown')}")
     click.echo(f"Uptime: {status_info['uptime']:.0f} seconds")
     click.echo(f"Events Processed: {status_info['metrics']['events_processed']}")
     click.echo(f"Threats Detected: {status_info['metrics']['threats_detected']}")

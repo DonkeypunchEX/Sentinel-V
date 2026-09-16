@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from sentinel_v import SentinelVSystem, create_sentinel_system
 from sentinel_v.core import SystemMode
+from sentinel_v.paths import status_file
 
 
 def _benign_event() -> Dict[str, Any]:
@@ -180,3 +181,31 @@ def test_create_from_yaml_and_json(tmp_path: Any) -> None:
     assert sentinel.mode == SystemMode.DEVELOPMENT
     assert len(sentinel.deception_net.decoys) == 4
     sentinel.shutdown()
+
+
+def test_heartbeat_written_and_removed_on_shutdown(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("SENTINEL_V_STATE_DIR", str(tmp_path))
+
+    sentinel = create_sentinel_system(write_status_file=True)
+    sentinel._write_heartbeat()
+
+    payload = json.loads(status_file().read_text())
+    assert payload["system_id"] == sentinel.system_id
+    assert payload["pid"] > 0
+    assert "last_updated" in payload
+
+    sentinel.shutdown()
+    assert not status_file().exists()
+
+
+def test_no_heartbeat_without_write_status_file_flag(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("SENTINEL_V_STATE_DIR", str(tmp_path))
+
+    sentinel = create_sentinel_system()
+    sentinel.shutdown()
+
+    assert not status_file().exists()

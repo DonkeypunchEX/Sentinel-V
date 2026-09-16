@@ -15,6 +15,7 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 $PidFile = "logs/sentinel.pid"
+$StateDir = if ($env:SENTINEL_V_STATE_DIR) { $env:SENTINEL_V_STATE_DIR } else { Join-Path $env:LOCALAPPDATA "Sentinel-V" }
 
 function Log-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Green }
 function Log-Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
@@ -103,16 +104,17 @@ function Start-System {
         }
     }
 
-    New-Item -ItemType Directory -Force -Path logs | Out-Null
+    New-Item -ItemType Directory -Force -Path logs, $StateDir | Out-Null
     $configPath = if (Test-Path "config/sentinel.yaml") { "config/sentinel.yaml" } else { "config/sentinel.default.yaml" }
+    $stderrLog = Join-Path $StateDir "sentinel.err.log"
 
     $proc = Start-Process -FilePath "sentinel-v" -ArgumentList "start", "--config", $configPath `
-        -RedirectStandardOutput "logs/sentinel.log" -RedirectStandardError "logs/sentinel.err.log" `
+        -RedirectStandardOutput (Join-Path $StateDir "sentinel.out.log") -RedirectStandardError $stderrLog `
         -PassThru -WindowStyle Hidden
 
     $proc.Id | Out-File -FilePath $PidFile -Encoding ascii
     Log-Info "Sentinel-V started with PID: $($proc.Id)"
-    Log-Info "Logs: logs/sentinel.log"
+    Log-Info "Logs: $StateDir"
 
     Start-Sleep -Seconds 3
     if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
@@ -120,7 +122,7 @@ function Start-System {
         sentinel-v status
     } else {
         Log-Error "Failed to start Sentinel-V"
-        if (Test-Path "logs/sentinel.err.log") { Get-Content "logs/sentinel.err.log" -Tail 20 }
+        if (Test-Path $stderrLog) { Get-Content $stderrLog -Tail 20 }
         exit 1
     }
 }

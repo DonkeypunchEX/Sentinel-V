@@ -20,6 +20,7 @@ from .crypto import QuantumResistantCrypto
 from .response import AutonomousResponseEngine
 from .monitoring import AdaptiveThreatMatrix
 from .federation import FederatedDefenseNode
+from .paths import status_file
 
 
 class SystemMode(Enum):
@@ -93,8 +94,14 @@ class SentinelVSystem:
         ipaddress.ip_network("fe80::/10"),  # link-local
     )
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        write_status_file: bool = False,
+    ):
         self.config = config or self._load_default_config()
+        self._write_status_file = write_status_file
         self.system_id = self._generate_system_id()
 
         # Initialize components
@@ -434,12 +441,47 @@ class SentinelVSystem:
                 # Clean up old data
                 self._cleanup_old_data()
 
+                # Publish a heartbeat so `sentinel-v status` (run from a
+                # separate process) can read live state off disk
+                if self._write_status_file:
+                    self._write_heartbeat()
+
                 # Sleep before next check
                 time.sleep(30)  # Check every 30 seconds
 
             except Exception as e:
                 logging.error(f"Error in system monitor: {e}")
                 time.sleep(60)
+
+    def _write_heartbeat(self) -> None:
+        """Persist current status to the heartbeat file, atomically.
+
+        The temp file name includes the pid and thread id so concurrent
+        writers (the monitor thread and an explicit call, or two system
+        instances sharing a state dir) never collide on the same path.
+        """
+        import os
+
+        payload = self.get_system_status()
+        payload["pid"] = os.getpid()
+        payload["last_updated"] = datetime.now().isoformat()
+
+        target = status_file()
+        tmp = target.with_name(
+            f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            tmp.write_text(json.dumps(payload))
+            tmp.replace(target)
+        except OSError as e:
+            logging.error(f"Failed to write status heartbeat: {e}")
+
+    def _remove_heartbeat(self) -> None:
+        """Best-effort removal of the heartbeat file on shutdown."""
+        try:
+            status_file().unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _update_resource_metrics(self) -> None:
         """Update resource usage metrics from the host"""
@@ -519,6 +561,9 @@ class SentinelVSystem:
         if self.federation_enabled:
             self.federation.leave_network()
 
+        if self._write_status_file:
+            self._remove_heartbeat()
+
         self.status = "shutdown"
         logging.info("Sentinel-V system shutdown complete")
 
@@ -527,6 +572,7 @@ class SentinelVSystem:
 def create_sentinel_system(
     config_file: Optional[str] = None,
     overrides: Optional[Dict[str, Any]] = None,
+    write_status_file: bool = False,
 ) -> SentinelVSystem:
     """
     Create a Sentinel-V system with optional configuration file
@@ -534,6 +580,10 @@ def create_sentinel_system(
     Args:
         config_file: Path to configuration file (YAML or JSON)
         overrides: Config keys that take precedence over the file
+        write_status_file: Publish a heartbeat file for `sentinel-v status`
+            to read. Only the long-running daemon (`sentinel-v start`)
+            should set this - short-lived instances (analyze, status
+            itself, ...) must not overwrite a real daemon's heartbeat.
 
     Returns:
         Initialized SentinelVSystem instance
@@ -552,4 +602,4 @@ def create_sentinel_system(
     if overrides:
         config.update(overrides)
 
-    return SentinelVSystem(config or None)
+    return SentinelVSystem(config or None, write_status_file=write_status_file)

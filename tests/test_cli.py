@@ -1,17 +1,69 @@
 """Tests for the sentinel-v command line interface."""
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from click.testing import CliRunner
 
 from sentinel_v.cli import cli
+from sentinel_v.paths import status_file
 
 
-def test_status_command_runs() -> None:
+def test_status_command_reports_not_running_with_no_daemon(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("SENTINEL_V_STATE_DIR", str(tmp_path))
+
     result = CliRunner().invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    assert "not running" in result.output
+    assert "System Status" not in result.output
+
+
+def test_status_command_reports_stale_heartbeat_as_not_running(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("SENTINEL_V_STATE_DIR", str(tmp_path))
+    stale_time = datetime.now() - timedelta(minutes=5)
+    status_file().write_text(
+        json.dumps({"system_id": "abc123", "last_updated": stale_time.isoformat()})
+    )
+
+    result = CliRunner().invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    assert "not running" in result.output
+    assert "stale heartbeat" in result.output
+
+
+def test_status_command_reports_live_daemon(tmp_path: Any, monkeypatch: Any) -> None:
+    monkeypatch.setenv("SENTINEL_V_STATE_DIR", str(tmp_path))
+    status_file().write_text(
+        json.dumps(
+            {
+                "system_id": "abc123",
+                "status": "operational",
+                "pid": 4242,
+                "uptime": 12.5,
+                "last_updated": datetime.now().isoformat(),
+                "metrics": {
+                    "events_processed": 7,
+                    "threats_detected": 2,
+                    "resource_usage": {"cpu": 0.1, "memory": 0.2},
+                },
+            }
+        )
+    )
+
+    result = CliRunner().invoke(cli, ["status"])
+
     assert result.exit_code == 0
     assert "Sentinel-V System Status" in result.output
+    assert "abc123" in result.output
+    assert "PID: 4242" in result.output
+    assert "Events Processed: 7" in result.output
 
 
 def test_analyze_command(tmp_path: Any) -> None:

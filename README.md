@@ -83,7 +83,7 @@ WSL required), use the equivalent script:
 
 ```powershell
 .\scripts\deploy.ps1 install   # install deps, write config/sentinel.yaml, run tests
-.\scripts\deploy.ps1 start     # start in the background, log to logs\sentinel.log
+.\scripts\deploy.ps1 start     # start in the background, log to %LOCALAPPDATA%\Sentinel-V
 .\scripts\deploy.ps1 status
 .\scripts\deploy.ps1 stop
 ```

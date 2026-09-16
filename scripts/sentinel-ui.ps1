@@ -10,18 +10,17 @@
     everything it shows is exactly what `sentinel-v --help` can do.
 
 .NOTES
-    There is no running daemon with shared state: `sentinel-v start`
-    idles in the background, and every other CLI call (status, analyze,
-    ...) spins up its own short-lived SentinelVSystem instance. "Status"
-    below reflects a fresh instance, not live counters from a background
-    process - that matches how the CLI itself behaves.
+    `sentinel-v start` publishes a heartbeat file that `sentinel-v status`
+    (run from any other process) reads, so "Status" below reflects the
+    real running daemon's live counters, not a throwaway instance.
 #>
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 $DeployScript = Join-Path $PSScriptRoot "deploy.ps1"
-$LogPath = "logs/sentinel.log"
+$StateDir = if ($env:SENTINEL_V_STATE_DIR) { $env:SENTINEL_V_STATE_DIR } else { Join-Path $env:LOCALAPPDATA "Sentinel-V" }
+$LogPath = Join-Path $StateDir "sentinel.log"
 
 function Write-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Green }
 function Write-Warn2($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
