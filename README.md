@@ -32,6 +32,9 @@ Working with only the base install (`pip install -e .`):
   PQC-shaped interface
 - **`sentinel-v` CLI** — start, analyze, status, deploy-decoys,
   validate-config, export-sbom
+- **Windows event collector** — `sentinel-v start --windows-events` feeds
+  live Sysmon (process/network/DNS) and Security (failed logon) events
+  into the running system
 
 Optional extras add research modules loaded lazily (the base package
 never imports them): `ml` (scikit-learn detector, federated learning),
@@ -43,7 +46,7 @@ never imports them): `ml` (scikit-learn detector, federated learning),
 git clone https://github.com/DonkeypunchEX/Sentinel-V.git
 cd Sentinel-V
 pip install -e ".[dev,cli]"   # Python 3.10+
-pytest tests/                 # 39 tests
+pytest tests/                 # 56 tests
 python examples/basic_usage.py
 ```
 
@@ -88,6 +91,22 @@ WSL required), use the equivalent script:
 .\scripts\deploy.ps1 stop
 ```
 
+To have Sentinel-V defend the machine it's running on instead of only
+replaying canned event files, feed it live Windows telemetry:
+
+```powershell
+sentinel-v start --windows-events   # run as Administrator
+```
+
+This polls Sysmon (process create, network connect, DNS query - Event
+IDs 1/3/22) and the Security log (failed logon - Event ID 4625) every 10
+seconds and runs each event through the same pipeline `analyze` uses.
+Requires [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon)
+installed and configured to log those IDs, and an elevated shell - both
+the Sysmon Operational channel and the Security log are access-controlled,
+readable only by administrators or members of "Event Log Readers". Windows
+only; the flag is a no-op elsewhere.
+
 For an interactive front end instead of remembering flags, run:
 
 ```powershell
@@ -99,11 +118,11 @@ A menu-driven console UI over the same `sentinel-v` CLI and
 an events file (with a summary table), deploy decoys, validate a
 config, export the SBOM, run tests, and a live log tail. It wraps
 existing commands only; it does not add any new capability to the
-Python package. Note that `status` (in the UI or the CLI) reflects a
-fresh, short-lived `SentinelVSystem` instance, not live counters from
-a running background process — the CLI has no daemon/IPC layer, so
-there is currently no way to see real-time metrics from an already
-running `start` process.
+Python package. `status` (in the UI or the CLI) reads a heartbeat file
+that a running `start` daemon's monitor thread refreshes every 30
+seconds, so it reflects that daemon's real uptime and counters; if no
+heartbeat is found, or it's gone stale (the daemon died without
+cleaning up), `status` says so plainly instead of showing zeros.
 
 ### Standalone executable
 

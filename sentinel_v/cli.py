@@ -3,7 +3,9 @@
 
 import json
 import logging
+import os
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -40,7 +42,15 @@ def cli() -> None:
     default="INFO",
     help="Logging level",
 )
-def start(config: Optional[str], mode: str, log_level: str) -> None:
+@click.option(
+    "--windows-events",
+    is_flag=True,
+    help=(
+        "Feed local Sysmon (process/network/DNS) and Security (failed logon) "
+        "events into the running system. Windows only."
+    ),
+)
+def start(config: Optional[str], mode: str, log_level: str, windows_events: bool) -> None:
     """Start the Sentinel-V system and run until interrupted."""
     log_path = main_log_file()
     logging.basicConfig(
@@ -56,11 +66,31 @@ def start(config: Optional[str], mode: str, log_level: str) -> None:
     click.echo(f"   Defense Level: {sentinel.defense_level.value}")
     click.echo(f"   Log file: {log_path}")
 
+    collector_stop = threading.Event()
+    if windows_events:
+        if os.name != "nt":
+            click.echo(
+                "   --windows-events requires Windows (Get-WinEvent); ignoring.",
+                err=True,
+            )
+        else:
+            from .windows_events import WindowsEventCollector
+
+            collector = WindowsEventCollector(sentinel)
+            threading.Thread(
+                target=collector.run_forever, args=(collector_stop,), daemon=True
+            ).start()
+            click.echo(
+                "   Windows event collection: Sysmon (process/network/DNS) + "
+                "Security (failed logon)"
+            )
+
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         click.echo("\nShutting down Sentinel-V system...")
+        collector_stop.set()
         sentinel.shutdown()
 
 
