@@ -57,8 +57,8 @@ build = ["pyinstaller>=6.0"]
 [project.urls]
 Homepage = "https://github.com/DonkeypunchEX/Sentinel-V"
 Repository = "https://github.com/DonkeypunchEX/Sentinel-V"
-Issues = "https://github.com/yourusername/sentinel-v-cyber-defense/issues"
-Changelog = "https://github.com/yourusername/sentinel-v-cyber-defense/releases"
+Issues = "https://github.com/DonkeypunchEX/Sentinel-V/issues"
+Changelog = "https://github.com/DonkeypunchEX/Sentinel-V/releases"
 
 [project.scripts]
 sentinel-v = "sentinel_v.cli:main"
