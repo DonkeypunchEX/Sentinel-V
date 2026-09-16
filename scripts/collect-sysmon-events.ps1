@@ -20,10 +20,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Get-WinEvent's -FilterHashtable StartTime/EndTime ignores DateTime.Kind
+# and reads the value as local wall-clock time regardless - passing a
+# UTC-kind value here (even one representing the correct instant) makes it
+# query for events hours in the future/past depending on the local UTC
+# offset, silently returning zero matches. $Since arrives as a UTC ISO
+# 8601 string (Python's WindowsEventCollector), so it must be converted
+# to local time, not just parsed, before use as a filter bound.
 $sinceTime = if ($Since) {
-    [datetime]::Parse($Since).ToUniversalTime()
+    [datetime]::Parse($Since).ToLocalTime()
 } else {
-    (Get-Date).ToUniversalTime().AddMinutes(-5)
+    (Get-Date).AddMinutes(-5)
 }
 
 function ConvertTo-EventDataHash {
