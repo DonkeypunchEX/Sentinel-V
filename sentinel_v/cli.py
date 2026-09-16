@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import click
@@ -20,6 +21,29 @@ from .paths import main_log_file, status_file
 # (retrying after 60s on error) - anything older than this is treated as
 # a crashed or killed process rather than a live one.
 HEARTBEAT_STALE_SECONDS = 90
+
+
+def _configured_log_file(config_file: Optional[str]) -> Path:
+    """Resolve the configured log path without depending on the CWD."""
+    if not config_file:
+        return main_log_file()
+
+    config_path = Path(config_file).resolve()
+    with config_path.open("r", encoding="utf-8") as handle:
+        config_data = yaml.safe_load(handle) or {}
+
+    configured = config_data.get("log_file")
+    if not configured:
+        return main_log_file()
+
+    log_path = Path(str(configured)).expanduser()
+    if not log_path.is_absolute():
+        base = config_path.parent
+        if base.name.lower() == "config":
+            base = base.parent
+        log_path = base / log_path
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    return log_path
 
 
 @click.group()
@@ -50,9 +74,11 @@ def cli() -> None:
         "events into the running system. Windows only."
     ),
 )
-def start(config: Optional[str], mode: str, log_level: str, windows_events: bool) -> None:
+def start(
+    config: Optional[str], mode: str, log_level: str, windows_events: bool
+) -> None:
     """Start the Sentinel-V system and run until interrupted."""
-    log_path = main_log_file()
+    log_path = _configured_log_file(config)
     logging.basicConfig(
         level=getattr(logging, log_level),
         handlers=[logging.StreamHandler(), logging.FileHandler(str(log_path))],

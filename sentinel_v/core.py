@@ -446,12 +446,12 @@ class SentinelVSystem:
                 if self._write_status_file:
                     self._write_heartbeat()
 
-                # Sleep before next check
-                time.sleep(30)  # Check every 30 seconds
+                # Sleep before next check, but wake immediately during shutdown.
+                self.shutdown_flag.wait(30)
 
             except Exception as e:
                 logging.error(f"Error in system monitor: {e}")
-                time.sleep(60)
+                self.shutdown_flag.wait(60)
 
     def _write_heartbeat(self) -> None:
         """Persist current status to the heartbeat file, atomically.
@@ -557,6 +557,8 @@ class SentinelVSystem:
         logging.info("Shutting down Sentinel-V system")
 
         self.shutdown_flag.set()
+        if self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=2)
 
         if self.federation_enabled:
             self.federation.leave_network()

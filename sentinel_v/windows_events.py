@@ -17,7 +17,8 @@ import json
 import logging
 import re
 import socket
-import subprocess
+# The collector must invoke the bundled PowerShell script on Windows.
+import subprocess  # nosec B404
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,7 +29,9 @@ from .core import SentinelVSystem
 SYSMON_LOG = "Microsoft-Windows-Sysmon/Operational"
 SECURITY_LOG = "Security"
 
-_COLLECT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "collect-sysmon-events.ps1"
+_COLLECT_SCRIPT = (
+    Path(__file__).resolve().parent.parent / "scripts" / "collect-sysmon-events.ps1"
+)
 
 # Logon Type codes (Security 4625) mapped to the port most commonly
 # associated with that access method, used only when the event itself
@@ -52,7 +55,7 @@ def _local_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
+            return str(sock.getsockname()[0])
     except OSError:
         return "127.0.0.1"
 
@@ -146,7 +149,12 @@ def shape_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     instead of raising, so one unexpected record can't take down the
     collector loop.
     """
-    shaper = _SHAPERS.get((record.get("LogName"), record.get("EventId")))
+    log_name = record.get("LogName")
+    event_id = record.get("EventId")
+    if not isinstance(log_name, str) or not isinstance(event_id, int):
+        return None
+
+    shaper = _SHAPERS.get((log_name, event_id))
     if shaper is None:
         return None
 
@@ -218,7 +226,7 @@ class WindowsEventCollector:
         if not _COLLECT_SCRIPT.exists():
             raise OSError(f"collector script not found: {_COLLECT_SCRIPT}")
 
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             [
                 self.powershell_path,
                 "-NoProfile",

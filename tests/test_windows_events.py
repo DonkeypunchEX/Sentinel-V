@@ -6,7 +6,7 @@ PowerShell, so they run on any platform, not just Windows.
 """
 
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List
 
 from sentinel_v import SentinelVSystem
@@ -111,6 +111,10 @@ def test_shape_event_dispatches_on_log_and_id() -> None:
 def test_shape_event_returns_none_for_unhandled_ids() -> None:
     record = {"LogName": "Application", "EventId": 1000, "Data": {}}
     assert shape_event(record) is None
+
+
+def test_shape_event_returns_none_for_malformed_identity() -> None:
+    assert shape_event({"LogName": "Security", "EventId": "4625"}) is None
 
 
 def _stub_collector(

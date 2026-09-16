@@ -6,7 +6,7 @@ from typing import Any
 
 from click.testing import CliRunner
 
-from sentinel_v.cli import cli
+from sentinel_v.cli import _configured_log_file, cli
 from sentinel_v.paths import status_file
 
 
@@ -79,6 +79,20 @@ def test_analyze_command(tmp_path: Any) -> None:
     results = json.loads(out_file.read_text())
     assert len(results) == 1
     assert results[0]["threat_level"] == "BENIGN"
+
+
+def test_configured_log_file_is_relative_to_config_root(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_file = config_dir / "sentinel.yaml"
+    config_file.write_text("log_file: logs/custom.log\n")
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    monkeypatch.chdir(other_dir)
+
+    assert _configured_log_file(str(config_file)) == tmp_path / "logs" / "custom.log"
 
 
 def test_deploy_decoys_command() -> None:

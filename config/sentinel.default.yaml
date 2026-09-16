@@ -5,6 +5,10 @@
 system_mode: production        # dev | test | staging | production
 defense_level: standard        # passive | standard | aggressive | paranoid
 
+# Relative paths are resolved from the project root when this file lives in
+# config/. An absolute path is also accepted.
+log_file: logs/sentinel.log
+
 # Deception network: decoy addresses are derived from this range.
 deception_network: "10.0.0.0/24"
 decoy_count: 5

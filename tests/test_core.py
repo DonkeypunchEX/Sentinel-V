@@ -161,10 +161,16 @@ def test_status_report_structure(system: SentinelVSystem) -> None:
 
 
 def test_shutdown_is_clean(system: SentinelVSystem) -> None:
+    assert system.monitor_thread.is_alive()
     system.shutdown()
     assert system.status == "shutdown"
     assert system.shutdown_flag.is_set()
     assert system.federation.joined is False
+    assert not system.monitor_thread.is_alive()
+
+    # Shutdown is safe to call again after all lifecycle resources are closed.
+    system.shutdown()
+    assert not system.monitor_thread.is_alive()
 
 
 def test_create_from_yaml_and_json(tmp_path: Any) -> None:

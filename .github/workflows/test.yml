@@ -1,16 +1,10 @@
 name: Tests
 
-# warehouse-app/ is a Node project with its own test suite; this
-# workflow gates the Python framework only.
 on:
   push:
     branches: [ main, develop ]
-    paths-ignore:
-      - 'warehouse-app/**'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - 'warehouse-app/**'
 
 jobs:
   test:

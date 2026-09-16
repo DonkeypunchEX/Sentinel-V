@@ -21,5 +21,3 @@ patch releases and are noted in the advisory.
 - The Python framework's response engine is simulation-safe by design —
   it logs and recommends actions but never mutates the host or network.
   Reports that it "fails to block" traffic are working as intended.
-- `warehouse-app/` is a separate Node service with its own threat model;
-  see `warehouse-app/README.md` for its security posture.

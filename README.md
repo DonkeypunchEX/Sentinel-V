@@ -10,9 +10,6 @@ proportional, auditable responses. Response execution is
 **simulation-safe by design** — the engine logs and recommends actions;
 enforcement is left to integrations you control.
 
-This repository also contains **WHSE-01**, a self-hosted warehouse
-inventory system, under [`warehouse-app/`](warehouse-app/README.md).
-
 ## What's implemented
 
 Working with only the base install (`pip install -e .`):
@@ -46,7 +43,7 @@ never imports them): `ml` (scikit-learn detector, federated learning),
 git clone https://github.com/DonkeypunchEX/Sentinel-V.git
 cd Sentinel-V
 pip install -e ".[dev,cli]"   # Python 3.10+
-pytest tests/                 # 56 tests
+pytest tests/                 # 59 tests
 python examples/basic_usage.py
 ```
 
@@ -76,6 +73,10 @@ sentinel-v deploy-decoys --network 10.0.0.0/24 --count 5
 ```
 
 Configuration reference: [`config/sentinel.default.yaml`](config/sentinel.default.yaml).
+When a config file sets `log_file`, relative paths resolve from the project
+root when the file is under `config/`, not from the process's current
+directory. Without a configured path, logs remain in the per-user Sentinel-V
+state directory.
 Docker: `docker build -t sentinel-v . && docker run sentinel-v`
 (mount your own `config/` to override defaults).
 
@@ -153,8 +154,7 @@ make format        # black
 ```
 
 CI runs the same gates across Python 3.10–3.12 on every push and pull
-request; `warehouse-app/` changes are gated by its own Node test suite
-instead.
+request.
 
 ### Optional extras
 
