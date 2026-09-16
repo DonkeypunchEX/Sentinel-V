@@ -8,7 +8,9 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [string]$Command = "help"
+    [string]$Command = "help",
+
+    [switch]$WindowsEvents
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +22,12 @@ $StateDir = if ($env:SENTINEL_V_STATE_DIR) { $env:SENTINEL_V_STATE_DIR } else { 
 function Log-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Green }
 function Log-Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 function Log-Error($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
+
+function Test-IsElevated {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
 function Check-Prerequisites {
     Log-Info "Checking prerequisites..."
@@ -85,11 +93,19 @@ function Run-Tests {
 }
 
 function Get-SentinelProcess {
+    # CommandLine for a full-path invocation is quoted (`"...\sentinel-v.exe" start`),
+    # so a literal `"` can sit right after `.exe` and before the separating
+    # space - the `"?` here tolerates that, otherwise this never matches and
+    # an already-running daemon goes undetected.
     Get-CimInstance Win32_Process -Filter "Name = 'sentinel-v.exe' or Name = 'python.exe'" |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match "sentinel-v(\.exe)?\s+start" }
+        Where-Object { $_.CommandLine -and $_.CommandLine -match 'sentinel-v(\.exe)?"?\s+start' }
 }
 
 function Start-System {
+    param(
+        [switch]$WindowsEvents
+    )
+
     Log-Info "Starting Sentinel-V system..."
 
     $existing = Get-SentinelProcess
@@ -108,7 +124,15 @@ function Start-System {
     $configPath = if (Test-Path "config/sentinel.yaml") { "config/sentinel.yaml" } else { "config/sentinel.default.yaml" }
     $stderrLog = Join-Path $StateDir "sentinel.err.log"
 
-    $proc = Start-Process -FilePath "sentinel-v" -ArgumentList "start", "--config", $configPath `
+    $startArgs = @("start", "--config", $configPath)
+    if ($WindowsEvents) {
+        if (-not (Test-IsElevated)) {
+            Log-Warn "-WindowsEvents requires an elevated (Administrator) shell to read the Sysmon/Security logs - collection will fail every poll without it."
+        }
+        $startArgs += "--windows-events"
+    }
+
+    $proc = Start-Process -FilePath "sentinel-v" -ArgumentList $startArgs `
         -RedirectStandardOutput (Join-Path $StateDir "sentinel.out.log") -RedirectStandardError $stderrLog `
         -PassThru -WindowStyle Hidden
 
@@ -157,7 +181,7 @@ function Show-Help {
     @"
 Sentinel-V Deployment Script
 
-Usage: deploy.ps1 [command]
+Usage: deploy.ps1 [command] [-WindowsEvents]
 
 Commands:
   install     Install and configure Sentinel-V
@@ -168,10 +192,16 @@ Commands:
   test        Run tests
   help        Show this help message
 
+Options:
+  -WindowsEvents   With start/restart, feed local Sysmon (process/network/
+                   DNS) and Security (failed logon) events into the running
+                   system. Requires an elevated (Administrator) shell.
+
 Examples:
-  .\deploy.ps1 install   # Install and configure
-  .\deploy.ps1 start     # Start the system
-  .\deploy.ps1 status    # Check status
+  .\deploy.ps1 install                  # Install and configure
+  .\deploy.ps1 start                    # Start the system
+  .\deploy.ps1 start -WindowsEvents     # Start with live event collection
+  .\deploy.ps1 status                   # Check status
 "@
 }
 
@@ -182,12 +212,12 @@ switch ($Command) {
         Configure-System
         Run-Tests
     }
-    "start" { Start-System }
+    "start" { Start-System -WindowsEvents:$WindowsEvents }
     "stop" { Stop-System }
     "restart" {
         Stop-System
         Start-Sleep -Seconds 2
-        Start-System
+        Start-System -WindowsEvents:$WindowsEvents
     }
     "status" {
         if (Get-Command sentinel-v -ErrorAction SilentlyContinue) {

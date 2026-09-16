@@ -30,9 +30,18 @@ function Test-SentinelInstalled {
     return [bool](Get-Command sentinel-v -ErrorAction SilentlyContinue)
 }
 
+function Test-IsElevated {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Get-SentinelProcess {
+    # See the matching comment in deploy.ps1: a full-path invocation's
+    # CommandLine is quoted, so `"?` is needed between `.exe` and the space
+    # before `start` or an already-running daemon goes undetected.
     Get-CimInstance Win32_Process -Filter "Name = 'sentinel-v.exe' or Name = 'python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match "sentinel-v(\.exe)?\s+start" }
+        Where-Object { $_.CommandLine -and $_.CommandLine -match 'sentinel-v(\.exe)?"?\s+start' }
 }
 
 function Get-RunningBadge {
@@ -66,9 +75,9 @@ function Show-Banner {
 function Show-Menu {
     Show-Banner
     Write-Host " 1) Status"
-    Write-Host " 2) Start system (background)"
+    Write-Host " 2) Start system (background, optionally with live Windows events)"
     Write-Host " 3) Stop system"
-    Write-Host " 4) Restart system"
+    Write-Host " 4) Restart system (optionally with live Windows events)"
     Write-Host " 5) Analyze events file"
     Write-Host " 6) Deploy decoys"
     Write-Host " 7) Validate a config file"
@@ -86,7 +95,15 @@ function Invoke-Status {
 }
 
 function Invoke-Start {
-    & $DeployScript start
+    $reply = Read-Host "Feed live Sysmon/Security events into the system? Requires Administrator (y/N)"
+    if ($reply -match '^[Yy]') {
+        if (-not (Test-IsElevated)) {
+            Write-Warn2 "This shell isn't running as Administrator - event collection will fail every poll without it."
+        }
+        & $DeployScript start -WindowsEvents
+    } else {
+        & $DeployScript start
+    }
 }
 
 function Invoke-Stop {
@@ -94,7 +111,15 @@ function Invoke-Stop {
 }
 
 function Invoke-Restart {
-    & $DeployScript restart
+    $reply = Read-Host "Feed live Sysmon/Security events into the system? Requires Administrator (y/N)"
+    if ($reply -match '^[Yy]') {
+        if (-not (Test-IsElevated)) {
+            Write-Warn2 "This shell isn't running as Administrator - event collection will fail every poll without it."
+        }
+        & $DeployScript restart -WindowsEvents
+    } else {
+        & $DeployScript restart
+    }
 }
 
 function Invoke-Install {
