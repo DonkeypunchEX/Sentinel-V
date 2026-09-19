@@ -7,6 +7,7 @@ on loopback only.
 """
 
 import inspect
+import socket
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,33 @@ class TestLifecycle:
     ) -> None:
         assert engine.stop_tcp_tarpit(host="127.0.0.1", port=54321) is True
 
+    def test_tcp_tarpit_cleanup_handles_missing_active_record(
+        self, engine: TarpitEngine
+    ) -> None:
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.bind(("127.0.0.1", 0))
+        server_sock.listen(1)
+        server_port = server_sock.getsockname()[1]
+
+        client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_sock.connect(("127.0.0.1", server_port))
+        accepted_sock, client_addr = server_sock.accept()
+
+        engine.connection_timeout = 0.01
+        key = (client_addr[0], client_addr[1], "127.0.0.1", server_port)
+        engine.active_connections.pop(key, None)
+
+        engine._tcp_tarpit_handle_connection(
+            accepted_sock,
+            client_addr[0],
+            client_addr[1],
+            "127.0.0.1",
+            server_port,
+        )
+
+        client_sock.close()
+        server_sock.close()
+
 
 class TestBookkeeping:
     def test_reset_clears_state(self, engine: TarpitEngine) -> None:
@@ -93,3 +121,4 @@ class TestLoggerHandlers:
         TarpitEngine(log_file=log_file)
         after = len(first.logger.handlers)
         assert after == before
+
