@@ -121,4 +121,3 @@ class TestLoggerHandlers:
         TarpitEngine(log_file=log_file)
         after = len(first.logger.handlers)
         assert after == before
-
