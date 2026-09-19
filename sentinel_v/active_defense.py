@@ -17,10 +17,12 @@ Safety:
 """
 
 import ipaddress
+import json
 import logging
 import platform
 import subprocess  # nosec B404 - firewall/network commands, no shell, list argv only
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +107,8 @@ class ActiveDefenseEngine:
         auto_isolate: bool = False,
         auto_rate_limit: bool = True,
         block_duration: Optional[int] = None,  # seconds, None = permanent
+        allowlist: Optional[Set[str]] = None,
+        persistent_state_file: Optional[str] = None,
     ):
         """Initialize the Active Defense Engine.
 
@@ -115,12 +119,23 @@ class ActiveDefenseEngine:
             auto_isolate: Automatically isolate compromised hosts
             auto_rate_limit: Automatically rate limit suspicious traffic
             block_duration: Duration in seconds for blocks (None = permanent)
+            allowlist: Set of IPs/networks that should NEVER be blocked
+            persistent_state_file: Path to file for persisting block state
         """
         self.enforce_mode = enforce_mode
         self.auto_block = auto_block
         self.auto_isolate = auto_isolate
         self.auto_rate_limit = auto_rate_limit
         self.block_duration = block_duration
+        
+        # Allowlist - IPs/networks that should NEVER be blocked
+        # Includes gateway, DNS servers, etc.
+        self.allowlist: Set[str] = allowlist or set()
+        
+        # Persistence
+        self.persistent_state_file = persistent_state_file or str(
+            Path(str(active_defense_log_file())).parent / "active_defense_state.json"
+        )
 
         # State tracking
         self.blocked_ips: Set[str] = set()
@@ -128,6 +143,10 @@ class ActiveDefenseEngine:
         self.isolated_hosts: Set[str] = set()
         self.rate_limit_rules: List[RateLimitRule] = []
         self.action_history: List[Dict[str, Any]] = []
+        
+        # Track timed blocks for auto-unblock
+        self._timed_blocks: Dict[str, Tuple[datetime, Optional[float]]] = {}  # target -> (block_time, duration)
+        self._timed_block_lock = threading.Lock()
 
         # Platform detection
         self.platform = platform.system().lower()
@@ -139,10 +158,17 @@ class ActiveDefenseEngine:
 
         # Load existing blocks on startup
         self._load_persistent_blocks()
+        
+        # Start cleanup thread for timed blocks
+        self._cleanup_thread = threading.Thread(
+            target=self._cleanup_expired_blocks, daemon=True
+        )
+        self._cleanup_thread.start()
 
         logging.info(
             f"ActiveDefenseEngine initialized (enforce_mode={self.enforce_mode}, "
-            f"platform={self.platform}, firewall_tool={self._firewall_tool})"
+            f"platform={self.platform}, firewall_tool={self._firewall_tool}, "
+            f"allowlist={len(self.allowlist)} entries)"
         )
 
     def _detect_firewall_tool(self) -> str:
@@ -198,9 +224,104 @@ class ActiveDefenseEngine:
 
     def _load_persistent_blocks(self) -> None:
         """Load previously blocked IPs from persistent storage."""
-        # Implementation for loading from a file or database
-        # For now, this is a placeholder for future persistence
-        pass
+        try:
+            state_file = Path(self.persistent_state_file)
+            if state_file.exists():
+                with open(state_file, "r") as f:
+                    state = json.load(f)
+                    
+                # Restore blocked IPs
+                for ip in state.get("blocked_ips", []):
+                    self.blocked_ips.add(ip)
+                    # Check if it's a timed block
+                    if ip in state.get("timed_blocks", {}):
+                        block_info = state["timed_blocks"][ip]
+                        block_time = datetime.fromisoformat(block_info["timestamp"])
+                        duration = block_info.get("duration")
+                        self._timed_blocks[ip] = (block_time, duration)
+                
+                # Restore blocked networks
+                for net in state.get("blocked_networks", []):
+                    self.blocked_networks.add(net)
+                
+                # Restore rate limit rules
+                for rule_dict in state.get("rate_limit_rules", []):
+                    rule = RateLimitRule(**rule_dict)
+                    self.rate_limit_rules.append(rule)
+                
+                logging.info(
+                    f"Loaded persistent state: {len(self.blocked_ips)} IPs, "
+                    f"{len(self.blocked_networks)} networks, "
+                    f"{len(self.rate_limit_rules)} rate limit rules"
+                )
+        except Exception as e:
+            logging.warning(f"Failed to load persistent blocks: {e}")
+    
+    def _save_persistent_blocks(self) -> None:
+        """Save current block state to persistent storage."""
+        try:
+            state_file = Path(self.persistent_state_file)
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            state = {
+                "blocked_ips": list(self.blocked_ips),
+                "blocked_networks": list(self.blocked_networks),
+                "rate_limit_rules": [rule.to_dict() for rule in self.rate_limit_rules],
+                "timed_blocks": {},
+            }
+            
+            # Save timed block info
+            with self._timed_block_lock:
+                for target, (block_time, duration) in self._timed_blocks.items():
+                    state["timed_blocks"][target] = {
+                        "timestamp": block_time.isoformat(),
+                        "duration": duration,
+                    }
+            
+            with open(state_file, "w") as f:
+                json.dump(state, f, indent=2)
+            
+            logging.debug(f"Saved persistent state to {state_file}")
+        except Exception as e:
+            logging.warning(f"Failed to save persistent blocks: {e}")
+
+    def _cleanup_expired_blocks(self) -> None:
+        """Periodically clean up expired timed blocks."""
+        while True:
+            try:
+                with self._timed_block_lock:
+                    now = datetime.now()
+                    expired = []
+                    
+                    for target, (block_time, duration) in self._timed_blocks.items():
+                        if duration is not None:
+                            elapsed = (now - block_time).total_seconds()
+                            if elapsed >= duration:
+                                expired.append(target)
+                    
+                    for target in expired:
+                        # Remove from timed blocks
+                        del self._timed_blocks[target]
+                        
+                        # Remove from blocked sets
+                        if target in self.blocked_ips:
+                            self.blocked_ips.remove(target)
+                            self._unblock_ip(target)
+                        elif target in self.blocked_networks:
+                            self.blocked_networks.remove(target)
+                            self._unblock_network(target)
+                        
+                        logging.info(f"Auto-unblocked expired block: {target}")
+                    
+                    # Save state after cleanup
+                    if expired:
+                        self._save_persistent_blocks()
+                
+                # Check every 60 seconds
+                time.sleep(60)
+            except Exception as e:
+                logging.error(f"Error in cleanup thread: {e}")
+                time.sleep(60)
 
     def _save_action(
         self, action: str, target: str, reason: str, success: bool
@@ -259,6 +380,7 @@ class ActiveDefenseEngine:
                 ipaddress.ip_network("192.168.0.0/16"),
                 ipaddress.ip_network("127.0.0.0/8"),
                 ipaddress.ip_network("169.254.0.0/16"),
+                ipaddress.ip_network("100.64.0.0/10"),  # RFC 6598 - CGNAT
                 ipaddress.ip_network("::1/128"),
                 ipaddress.ip_network("fc00::/7"),
                 ipaddress.ip_network("fe80::/10"),
@@ -266,6 +388,36 @@ class ActiveDefenseEngine:
             return any(addr in network for network in internal_networks)
         except ValueError:
             return False
+
+    def _is_allowlisted(self, ip: str) -> bool:
+        """Check if an IP is in the allowlist (should never be blocked).
+        
+        Args:
+            ip: IP address to check
+            
+        Returns:
+            True if the IP is allowlisted, False otherwise
+        """
+        if not self.allowlist:
+            return False
+        
+        try:
+            addr = ipaddress.ip_address(ip)
+            for allowlisted in self.allowlist:
+                try:
+                    # Try as network first
+                    network = ipaddress.ip_network(allowlisted, strict=False)
+                    if addr in network:
+                        return True
+                except ValueError:
+                    # Try as single IP
+                    allow_addr = ipaddress.ip_address(allowlisted)
+                    if addr == allow_addr:
+                        return True
+        except ValueError:
+            return False
+        
+        return False
 
     def block_ip(
         self,
@@ -295,6 +447,12 @@ class ActiveDefenseEngine:
             logging.debug(f"Block IP disabled by configuration: {ip}")
             return False
 
+        # Don't block allowlisted IPs (gateway, DNS, etc.)
+        if self._is_allowlisted(ip):
+            self._save_action("block_ip", ip, reason, False)
+            logging.warning(f"Refusing to block allowlisted IP: {ip}")
+            return False
+
         # Don't block internal IPs
         if self._is_internal_ip(ip):
             self._save_action("block_ip", ip, reason, False)
@@ -317,8 +475,17 @@ class ActiveDefenseEngine:
 
         if success:
             self.blocked_ips.add(ip)
+            
+            # Track timed blocks
+            if duration is not None and duration > 0:
+                with self._timed_block_lock:
+                    self._timed_blocks[ip] = (datetime.now(), duration)
+            
+            # Save to persistent storage
+            self._save_persistent_blocks()
+            
             self._save_action("block_ip", ip, reason, True)
-            logging.info(f"Blocked IP: {ip} (reason: {reason})")
+            logging.info(f"Blocked IP: {ip} (reason: {reason}, duration={duration})")
         else:
             self._save_action("block_ip", ip, reason, False)
             logging.warning(f"Failed to block IP: {ip}")
@@ -351,10 +518,19 @@ class ActiveDefenseEngine:
     def _block_ip_iptables(self, ip: str, duration: Optional[int]) -> bool:
         """Block an IP using iptables."""
         try:
-            # Check if rule already exists
+            # Check if rule already exists using exact match
             check_cmd = ["iptables", "-L", "INPUT", "-n", "-v"]
             result = subprocess.run(check_cmd, capture_output=True, text=True)  # nosec
-            if ip in result.stdout:
+            
+            # Check for exact rule match (avoid substring matches)
+            rule_exists = False
+            for line in result.stdout.splitlines():
+                if f"-s {ip} -j DROP" in line or f"DROP {ip}" in line:
+                    rule_exists = True
+                    break
+            
+            if rule_exists:
+                logging.debug(f"iptables rule already exists for {ip}")
                 return True
 
             # Add block rule
@@ -365,9 +541,8 @@ class ActiveDefenseEngine:
             cmd = ["iptables", "-A", "OUTPUT", "-d", ip, "-j", "DROP"]
             subprocess.run(cmd, check=True)  # nosec
 
-            # If duration is specified, schedule removal
-            if duration and duration > 0:
-                threading.Timer(duration, self.unblock_ip, args=[ip]).start()
+            # If duration is specified, we track it in _timed_blocks
+            # (cleanup thread handles removal, not a Timer that dies on restart)
 
             return True
         except subprocess.CalledProcessError as e:
@@ -628,6 +803,69 @@ class ActiveDefenseEngine:
             logging.error(f"Error unblocking IP {ip}: {e}")
             return False
 
+    def _is_network_allowlisted(self, network: str) -> bool:
+        """Check if a network is in the allowlist.
+        
+        Args:
+            network: Network in CIDR notation
+            
+        Returns:
+            True if the network is allowlisted, False otherwise
+        """
+        if not self.allowlist:
+            return False
+        
+        try:
+            net = ipaddress.ip_network(network, strict=False)
+            for allowlisted in self.allowlist:
+                try:
+                    allow_net = ipaddress.ip_network(allowlisted, strict=False)
+                    # Check if the networks overlap
+                    if net.overlaps(allow_net):
+                        return True
+                except ValueError:
+                    # Try as single IP
+                    try:
+                        allow_addr = ipaddress.ip_address(allowlisted)
+                        if allow_addr in net:
+                            return True
+                    except ValueError:
+                        pass
+        except ValueError:
+            return False
+        
+        return False
+    
+    def _is_internal_network(self, network: str) -> bool:
+        """Check if a network is in the internal network ranges.
+        
+        Args:
+            network: Network in CIDR notation
+            
+        Returns:
+            True if the network is internal, False otherwise
+        """
+        try:
+            net = ipaddress.ip_network(network, strict=False)
+            internal_networks = [
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("127.0.0.0/8"),
+                ipaddress.ip_network("169.254.0.0/16"),
+                ipaddress.ip_network("100.64.0.0/10"),  # RFC 6598 - CGNAT
+                ipaddress.ip_network("::1/128"),
+                ipaddress.ip_network("fc00::/7"),
+                ipaddress.ip_network("fe80::/10"),
+            ]
+            for internal in internal_networks:
+                if net.overlaps(internal):
+                    return True
+        except ValueError:
+            return False
+        
+        return False
+
     def block_network(
         self,
         network: str,
@@ -649,9 +887,21 @@ class ActiveDefenseEngine:
 
         # Validate CIDR
         try:
-            ipaddress.ip_network(network, strict=False)
+            net = ipaddress.ip_network(network, strict=False)
         except ValueError:
             logging.error(f"Invalid CIDR notation: {network}")
+            return False
+
+        # Don't block allowlisted networks
+        if self._is_network_allowlisted(network):
+            self._save_action("block_network", network, reason, False)
+            logging.warning(f"Refusing to block allowlisted network: {network}")
+            return False
+        
+        # Don't block internal networks
+        if self._is_internal_network(network):
+            self._save_action("block_network", network, reason, False)
+            logging.warning(f"Refusing to block internal network: {network}")
             return False
 
         # Check if already blocked
@@ -1327,10 +1577,19 @@ class ActiveDefenseEngine:
     def _rate_limit_windows(
         self, source: str, port: int, protocol: str, rate: str
     ) -> bool:
-        """Apply rate limiting using Windows Firewall."""
+        """Apply rate limiting using Windows Firewall.
+        
+        Windows Firewall doesn't support rate limiting natively.
+        We log this as a debug message instead of warning to avoid
+        spamming logs when auto_rate_limit=True.
+        """
         # Windows Firewall doesn't support rate limiting natively
-        # This would require additional tools or scripting
-        logging.warning("Rate limiting not fully supported on Windows")
+        # This would require additional tools (e.g., Windows Traffic Control)
+        # or third-party firewall software
+        logging.debug(
+            f"Rate limiting not supported on Windows natively "
+            f"(source={source}, port={port}, rate={rate})"
+        )
         return False
 
     def _rate_limit_macos(
