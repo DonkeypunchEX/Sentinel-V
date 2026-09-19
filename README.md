@@ -70,7 +70,13 @@ CLI equivalent:
 sentinel-v status
 sentinel-v analyze events.json --output results.json
 sentinel-v deploy-decoys --network 10.0.0.0/24 --count 5
+sentinel-v dashboard
 ```
+
+The `dashboard` command starts a dependency-free local browser dashboard at
+`http://127.0.0.1:8765`. It reads the same heartbeat and log files as
+`sentinel-v status`, refreshes every five seconds, and opens the browser
+automatically. Use `sentinel-v dashboard --no-browser` for headless use.
 
 Configuration reference: [`config/sentinel.default.yaml`](config/sentinel.default.yaml).
 When a config file sets `log_file`, relative paths resolve from the project

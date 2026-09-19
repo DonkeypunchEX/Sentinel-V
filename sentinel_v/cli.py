@@ -17,10 +17,62 @@ import yaml
 from .core import SystemMode, create_sentinel_system
 from .paths import main_log_file, status_file
 
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+except ImportError:  # Keep the base CLI usable without the optional cli extra.
+    Console = Panel = Table = None  # type: ignore[assignment,misc]
+
 # A running daemon's monitor thread refreshes the heartbeat every 30s
 # (retrying after 60s on error) - anything older than this is treated as
 # a crashed or killed process rather than a live one.
 HEARTBEAT_STALE_SECONDS = 90
+
+
+def _print_rich_status(status_info: Dict[str, Any]) -> bool:
+    """Render status with Rich when the optional CLI extra is installed."""
+    if (
+        Console is None
+        or Panel is None
+        or Table is None
+        or not sys.stdout.isatty()
+    ):
+        return False
+
+    console = Console()
+    status = str(status_info.get("status", "unknown"))
+    status_style = "green" if status == "operational" else "yellow"
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("System ID", str(status_info.get("system_id", "unknown")))
+    table.add_row("Status", f"[{status_style}]{status}[/]")
+    table.add_row("PID", str(status_info.get("pid", "unknown")))
+    table.add_row("Uptime", f"{float(status_info.get('uptime', 0)):.0f} seconds")
+
+    metrics = status_info.get("metrics", {})
+    table.add_row("Events Processed", str(metrics.get("events_processed", 0)))
+    threats = int(metrics.get("threats_detected", 0))
+    threat_style = "red" if threats else "green"
+    table.add_row("Threats Detected", f"[{threat_style}]{threats}[/]")
+
+    resources = metrics.get("resource_usage", {})
+    if resources:
+        table.add_row(
+            "Resources",
+            "  ".join(
+                f"{name}: {float(value):.1%}" for name, value in resources.items()
+            ),
+        )
+    console.print(
+        Panel(
+            table,
+            title="[bold red]Sentinel-V System Status[/]",
+            border_style="dark_red",
+        )
+    )
+    return True
 
 
 def _configured_log_file(config_file: Optional[str]) -> Path:
@@ -237,6 +289,9 @@ def status() -> None:
         click.echo(f"   Last seen: {last_updated or 'unknown'}")
         return
 
+    if _print_rich_status(status_info):
+        return
+
     click.echo("Sentinel-V System Status")
     click.echo("=" * 40)
     click.echo(f"System ID: {status_info['system_id']}")
@@ -265,6 +320,19 @@ def status() -> None:
         click.echo(
             f"  Rate Limit Rules: {active_defense.get('total_rate_limit_rules', 0)}"
         )
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind address")
+@click.option("--port", default=8765, show_default=True, type=click.IntRange(1, 65535))
+@click.option(
+    "--no-browser", is_flag=True, help="Do not open the dashboard automatically"
+)
+def dashboard(host: str, port: int, no_browser: bool) -> None:
+    """Open the local Sentinel-V browser dashboard."""
+    from .dashboard import serve_dashboard
+
+    serve_dashboard(host, port, open_browser=not no_browser)
 
 
 @cli.command()
