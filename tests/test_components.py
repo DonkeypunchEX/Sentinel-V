@@ -1,5 +1,7 @@
 """Unit tests for the individual defense components."""
 
+from typing import Any
+
 import pytest
 
 from sentinel_v.crypto import QuantumResistantCrypto
@@ -157,3 +159,98 @@ class TestFederation:
         node.leave_network()
         assert node.joined is False
         assert node.connected_nodes == []
+
+    def test_share_ioc_queues_and_dedupes(self) -> None:
+        node = FederatedDefenseNode("node-a")
+        assert node.share_ioc("ip", "203.0.113.9", "scanner", 0.9) is True
+        assert node.share_ioc("ip", "203.0.113.9", "scanner", 0.9) is False
+        assert len(node.get_shared_iocs()) == 1
+
+    def test_share_ioc_rejects_unknown_type(self) -> None:
+        node = FederatedDefenseNode("node-a")
+        assert node.share_ioc("mac_address", "aa:bb", "n/a", 0.5) is False
+
+    def test_receive_ioc_rejects_invalid_type_or_empty_value(self) -> None:
+        node = FederatedDefenseNode("node-a")
+        assert node.receive_ioc({"ioc_type": "bogus", "value": "x"}) is False
+        assert node.receive_ioc({"ioc_type": "ip", "value": ""}) is False
+
+    def test_sync_with_peer_exchanges_iocs(self) -> None:
+        alice = FederatedDefenseNode("alice")
+        bob = FederatedDefenseNode("bob")
+        alice.join_network()
+        bob.join_network()
+
+        alice.share_ioc("ip", "203.0.113.9", "scanner", 0.9)
+        bob.share_ioc("domain", "evil.example", "c2", 0.8)
+
+        # sync_with_peer is bidirectional: alice pushes her IoC to bob
+        # and pulls bob's IoC back, so 2 IoCs change hands total.
+        exchanged = alice.sync_with_peer(bob)
+        assert exchanged == 2
+        assert any(ioc["value"] == "evil.example" for ioc in alice.get_received_iocs())
+        assert any(ioc["value"] == "203.0.113.9" for ioc in bob.get_received_iocs())
+
+    def test_peer_trust_starts_neutral_and_updates_on_receive(self) -> None:
+        node = FederatedDefenseNode("node-a")
+        assert node.get_peer_trust("unknown-peer") == 0.0
+        node.receive_ioc(
+            {
+                "ioc_type": "ip",
+                "value": "203.0.113.9",
+                "origin_node": "peer-b",
+                "confidence": 0.9,
+            }
+        )
+        assert node.get_peer_trust("peer-b") > 0.0
+
+    def test_save_and_load_state_round_trips(self, tmp_path: Any) -> None:
+        node = FederatedDefenseNode("node-a")
+        node.state_dir = tmp_path
+        node.share_ioc("ip", "203.0.113.9", "scanner", 0.9)
+
+        assert node.save_state() is True
+
+        restored = FederatedDefenseNode("node-a")
+        restored.state_dir = tmp_path
+        assert restored.load_state() is True
+        assert "ip:203.0.113.9" in restored.shared_iocs
+
+
+class TestDeceptionEnhancements:
+    def test_canary_tokens_are_unique_and_tracked(self) -> None:
+        net = DeceptionNetwork("198.51.100.0/24", decoy_count=1)
+        tokens = net.generate_canary_tokens(5)
+        assert len(tokens) == 5
+        assert len(set(tokens)) == 5
+        assert all(net.check_canary_token(t) for t in tokens)
+        assert net.check_canary_token("not-a-real-token") is False
+
+    def test_deploy_honey_files_creates_files_with_canary_tokens(
+        self, tmp_path: Any
+    ) -> None:
+        net = DeceptionNetwork("198.51.100.0/24", decoy_count=1)
+        created = net.deploy_honey_files(str(tmp_path), count=3)
+
+        assert len(created) == 3
+        for path in created:
+            assert path.exists()
+            token = net.check_honey_file_access(str(path))
+            assert token is not None
+            assert net.check_canary_token(token)
+
+    def test_honey_file_access_check_is_none_for_unknown_path(
+        self, tmp_path: Any
+    ) -> None:
+        net = DeceptionNetwork("198.51.100.0/24", decoy_count=1)
+        net.deploy_honey_files(str(tmp_path), count=1)
+        assert (
+            net.check_honey_file_access(str(tmp_path / "not_a_honeyfile.txt")) is None
+        )
+
+    def test_statistics_include_new_counters(self, tmp_path: Any) -> None:
+        net = DeceptionNetwork("198.51.100.0/24", decoy_count=1)
+        net.deploy_honey_files(str(tmp_path), count=2)
+        stats = net.get_statistics()
+        assert stats["honey_files_count"] == 2
+        assert stats["canary_tokens_count"] >= 2

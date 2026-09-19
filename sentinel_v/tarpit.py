@@ -154,12 +154,20 @@ class TarpitEngine:
         self.logger = logging.getLogger("sentinel_v.tarpit")
         self.logger.setLevel(logging.INFO)
 
-        # File handler
-        file_handler = logging.FileHandler(self.log_file)
-        file_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
+        # self.logger is a module-level named logger, so constructing more
+        # than one TarpitEngine in the same process must not pile up
+        # duplicate handlers - that would both leak file descriptors and
+        # duplicate every log line (see the same fix in active_defense.py).
+        resolved_log_file = str(Path(self.log_file).resolve())
+        if not any(
+            isinstance(h, logging.FileHandler) and h.baseFilename == resolved_log_file
+            for h in self.logger.handlers
+        ):
+            file_handler = logging.FileHandler(self.log_file)
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
 
     def start_tcp_tarpit(
         self,
