@@ -49,3 +49,20 @@ def main_log_file() -> Path:
 def honeypot_log_file() -> Path:
     """Path to the standalone SSH honeypot's connection log."""
     return state_dir() / "honeypot.log"
+
+
+def active_defense_log_file() -> Path:
+    """Path to the active defense action log."""
+    return state_dir() / "active_defense.log"
+
+
+def forensics_dir() -> Path:
+    """Directory for forensic captures (payloads, sessions, etc.)."""
+    path = state_dir() / "forensics"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def tarpit_log_file() -> Path:
+    """Path to the tarpit service log."""
+    return state_dir() / "tarpit.log"

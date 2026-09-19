@@ -20,6 +20,8 @@ from .crypto import QuantumResistantCrypto
 from .response import AutonomousResponseEngine
 from .monitoring import AdaptiveThreatMatrix
 from .federation import FederatedDefenseNode
+from .active_defense import ActiveDefenseEngine
+from .forensics import ForensicCapture
 from .paths import status_file
 
 
@@ -122,6 +124,23 @@ class SentinelVSystem:
         self.response_engine = AutonomousResponseEngine(
             max_escalation=self.config.get("max_escalation", 3),
             autonomous_mode=self.config.get("autonomous_response", True),
+        )
+
+        # Active Defense capabilities
+        self.active_defense_enabled = self.config.get("active_defense_enabled", False)
+        self.active_defense = ActiveDefenseEngine(
+            enforce_mode=self.config.get("active_defense_enforce", False),
+            auto_block=self.config.get("active_defense_auto_block", True),
+            auto_isolate=self.config.get("active_defense_auto_isolate", False),
+            auto_rate_limit=self.config.get("active_defense_auto_rate_limit", True),
+            block_duration=self.config.get("active_defense_block_duration"),
+        )
+
+        # Forensic capture
+        self.forensics_enabled = self.config.get("forensics_enabled", False)
+        self.forensics = ForensicCapture(
+            max_payload_size=self.config.get("forensics_max_payload_size", 100 * 1024 * 1024),
+            extract_iocs=self.config.get("forensics_extract_iocs", True),
         )
 
         # Federation capabilities
@@ -300,6 +319,14 @@ class SentinelVSystem:
                     assessment["response_executed"] = execution_result
                     assessment["response_details"] = response
 
+                # Active defense: block IP, isolate host, or rate limit
+                if self.active_defense_enabled:
+                    self._apply_active_defense(assessment, response, is_decoy)
+
+                # Forensic capture: save payloads and extract IoCs
+                if self.forensics_enabled:
+                    self._apply_forensic_capture(assessment, event)
+
                 # Share with federation if enabled
                 if self.federation_enabled and threat_level.value >= 3:
                     self.federation.share_threat_intelligence(assessment)
@@ -369,6 +396,125 @@ class SentinelVSystem:
             return False
 
         return not any(addr in network for network in self._INTERNAL_NETWORKS)
+
+    def _apply_active_defense(
+        self,
+        assessment: Dict[str, Any],
+        response: Dict[str, Any],
+        is_decoy: bool,
+    ) -> None:
+        """Apply active defense measures based on threat assessment."""
+        event = assessment.get("event", {})
+        source_ip = event.get("source_ip", "")
+        threat_level = assessment.get("threat_level", "BENIGN")
+        escalation_step = response.get("escalation_step", 0)
+        
+        # Always block on decoy interaction or CRITICAL threats
+        if is_decoy or threat_level == "CRITICAL" or escalation_step >= 3:
+            self.active_defense.block_ip(
+                ip=source_ip,
+                reason=f"Threat detected: {threat_level} (decoy={is_decoy})",
+            )
+        
+        # Rate limit on MALICIOUS threats
+        if threat_level == "MALICIOUS" or escalation_step >= 2:
+            dest_port = event.get("dest_port", 0)
+            if dest_port > 0:
+                self.active_defense.rate_limit(
+                    source=source_ip,
+                    port=dest_port,
+                    protocol=event.get("protocol", "tcp"),
+                    rate="10/min",
+                    reason=f"Suspicious activity: {threat_level}",
+                )
+        
+        # Isolate internal hosts that are compromised
+        dest_ip = event.get("dest_ip", "")
+        if threat_level == "CRITICAL" and self._is_external_ip(dest_ip):
+            self.active_defense.isolate_host(
+                ip=dest_ip,
+                reason=f"Critical threat detected: {threat_level}",
+            )
+
+    def _apply_forensic_capture(
+        self,
+        assessment: Dict[str, Any],
+        event: Dict[str, Any],
+    ) -> None:
+        """Capture forensic data from threat events."""
+        threat_id = assessment.get("threat_id", "")
+        source_ip = event.get("source_ip", "")
+        threat_level = assessment.get("threat_level", "BENIGN")
+        
+        # Capture payloads if present
+        if "payload" in event:
+            payload = event["payload"]
+            if isinstance(payload, bytes):
+                self.forensics.dump_payload(
+                    threat_id=threat_id,
+                    payload=payload,
+                    source_ip=source_ip,
+                    metadata={
+                        "threat_level": threat_level,
+                        "event_type": event.get("event_type", "unknown"),
+                    },
+                )
+        
+        # For CRITICAL threats, start a session log
+        if threat_level == "CRITICAL":
+            session_id = self.forensics.start_session(
+                threat_id=threat_id,
+                source_ip=source_ip,
+                metadata={
+                    "threat_level": threat_level,
+                    "event_type": event.get("event_type", "unknown"),
+                },
+            )
+            assessment["forensic_session_id"] = session_id
+        """Apply active defense measures based on threat assessment.
+        
+        This method triggers firewall blocks, host isolation, or rate limiting
+        when active defense is enabled and enforce_mode is True.
+        
+        Args:
+            assessment: The threat assessment dictionary
+            response: The response plan from AutonomousResponseEngine
+            is_decoy: Whether this was a decoy interaction
+        """
+        if not self.active_defense_enabled:
+            return
+        
+        event = assessment.get("event", {})
+        source_ip = event.get("source_ip", "")
+        threat_level = assessment.get("threat_level", "BENIGN")
+        escalation_step = response.get("escalation_step", 0)
+        
+        # Always block on decoy interaction or CRITICAL threats
+        if is_decoy or threat_level == "CRITICAL" or escalation_step >= 3:
+            self.active_defense.block_ip(
+                ip=source_ip,
+                reason=f"Threat detected: {threat_level} (decoy={is_decoy})",
+            )
+        
+        # Rate limit on MALICIOUS threats
+        if threat_level == "MALICIOUS" or escalation_step >= 2:
+            dest_port = event.get("dest_port", 0)
+            if dest_port > 0:
+                self.active_defense.rate_limit(
+                    source=source_ip,
+                    port=dest_port,
+                    protocol=event.get("protocol", "tcp"),
+                    rate="10/min",
+                    reason=f"Suspicious activity: {threat_level}",
+                )
+        
+        # Isolate internal hosts that are compromised
+        dest_ip = event.get("dest_ip", "")
+        if threat_level == "CRITICAL" and self._is_external_ip(dest_ip):
+            self.active_defense.isolate_host(
+                ip=dest_ip,
+                reason=f"Critical threat detected: {threat_level}",
+            )
 
     def _generate_event_id(self) -> str:
         """Generate unique event identifier"""

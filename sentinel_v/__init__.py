@@ -15,6 +15,8 @@ from .deception import DeceptionNetwork
 from .federation import FederatedDefenseNode
 from .monitoring import AdaptiveThreatMatrix, ThreatLevel
 from .response import AutonomousResponseEngine
+from .active_defense import ActiveDefenseEngine
+from .forensics import ForensicCapture
 
 __version__ = "1.0.0"
 
@@ -29,6 +31,8 @@ __all__ = [
     "AdaptiveThreatMatrix",
     "ThreatLevel",
     "AutonomousResponseEngine",
+    "ActiveDefenseEngine",
+    "ForensicCapture",
     # lazy, require optional extras:
     "ThreatDetector",
     "DynamicHoneypot",

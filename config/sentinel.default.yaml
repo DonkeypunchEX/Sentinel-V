@@ -18,9 +18,25 @@ ml_learning_rate: 0.1
 ml_memory_size: 10000
 
 # Response engine: 0=log only .. 3=full playbook (all actions are
-# log/recommend semantics — integrations decide what to enforce).
+# log/recommend semantics \u2014 integrations decide what to enforce).
 max_escalation: 3
 autonomous_response: true
+
+# Active Defense (firewall blocking, host isolation, rate limiting)
+# WARNING: These actions modify firewall rules and network configuration
+# Only enable if you understand the implications and have proper authorization
+active_defense_enabled: false
+active_defense_enforce: false  # Must be true to actually execute actions (not just log)
+active_defense_auto_block: true
+active_defense_auto_isolate: false  # Isolate compromised hosts
+active_defense_auto_rate_limit: true
+active_defense_block_duration: null  # null = permanent, or seconds (e.g., 3600)
+
+# Forensic Capture (payload and session logging)
+# WARNING: May capture sensitive data - ensure compliance with privacy laws
+forensics_enabled: false
+forensics_max_payload_size: 104857600  # 100MB
+forensics_extract_iocs: true  # Automatically extract IoCs from captured data
 
 # Federation (threat-intel outbox; transport left to integrations)
 federation_enabled: false
