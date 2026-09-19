@@ -1,0 +1,9 @@
+[flake8]
+max-line-length = 88
+# dashboard.py embeds a single-file HTML/CSS/JS asset as a Python string
+# constant. It's already been wrapped at safe (string-literal-aware)
+# points to keep it readable, but some individual CSS rules and JS
+# statements are inherently long text content, not code - E501 doesn't
+# apply to embedded template content the way it does to Python logic.
+per-file-ignores =
+    sentinel_v/dashboard.py:E501

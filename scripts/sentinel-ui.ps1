@@ -60,12 +60,18 @@ function Pause-ForUser {
 function Show-Banner {
     Clear-Host
     $badge = Get-RunningBadge
-    $badgeColor = if ($badge -like "RUNNING*") { "Green" } else { "DarkGray" }
-    Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "  Sentinel-V - Autonomous Cyber-Defense" -ForegroundColor Cyan
-    Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host -NoNewline "  Background process: "
+    $badgeColor = if ($badge -like "RUNNING*") { "Green" } else { "Red" }
+    Write-Host "+---------------------------------------------------------------+" -ForegroundColor DarkRed
+    Write-Host "|  SSSSS  EEEEE  N   N TTTTT III N   N EEEEE L     - V          |" -ForegroundColor Red
+    Write-Host "|  S      E      NN  N   T    I  NN  N E     L     - V          |" -ForegroundColor Red
+    Write-Host "|  SSSSS  EEEE   N N N   T    I  N N N EEEE  L     - V          |" -ForegroundColor Red
+    Write-Host "|      S  E      N  NN   T    I  N  NN E     L     - V          |" -ForegroundColor Red
+    Write-Host "|  SSSSS  EEEEE  N   N   T    I  N   N EEEEE LLLLL - V          |" -ForegroundColor Red
+    Write-Host "|       AUTONOMOUS CYBER-DEFENSE COMMAND CENTER                 |" -ForegroundColor Yellow
+    Write-Host "+---------------------------------------------------------------+" -ForegroundColor DarkRed
+    Write-Host "|  Background process: " -NoNewline -ForegroundColor DarkRed
     Write-Host $badge -ForegroundColor $badgeColor
+    Write-Host "+---------------------------------------------------------------+" -ForegroundColor DarkRed
     if (-not (Test-SentinelInstalled)) {
         Write-Host "  sentinel-v CLI not found on PATH - run [8] Install first." -ForegroundColor Red
     }
@@ -96,9 +102,9 @@ function Invoke-Status {
 
 function Invoke-Start {
     $reply = Read-Host "Feed live Sysmon/Security events into the system? Requires Administrator (y/N)"
-    if ($reply -match '^[Yy]') {
+    if ($reply -match "^[Yy]") {
         if (-not (Test-IsElevated)) {
-            Write-Warn2 "This shell isn't running as Administrator - event collection will fail every poll without it."
+            Write-Warn2 "This shell is not running as Administrator - event collection will fail every poll without it."
         }
         & $DeployScript start -WindowsEvents
     } else {
@@ -112,9 +118,9 @@ function Invoke-Stop {
 
 function Invoke-Restart {
     $reply = Read-Host "Feed live Sysmon/Security events into the system? Requires Administrator (y/N)"
-    if ($reply -match '^[Yy]') {
+    if ($reply -match "^[Yy]") {
         if (-not (Test-IsElevated)) {
-            Write-Warn2 "This shell isn't running as Administrator - event collection will fail every poll without it."
+            Write-Warn2 "This shell is not running as Administrator - event collection will fail every poll without it."
         }
         & $DeployScript restart -WindowsEvents
     } else {
@@ -158,7 +164,16 @@ function Invoke-Analyze {
 
         $summary = $results | Group-Object threat_level | Sort-Object Name
         Write-Host "By threat level:" -ForegroundColor Cyan
-        $summary | ForEach-Object { Write-Host "  $($_.Name): $($_.Count)" }
+        $summary | ForEach-Object {
+            $levelColor = switch ($_.Name.ToUpperInvariant()) {
+                "BENIGN" { "Green" }
+                "SUSPICIOUS" { "Yellow" }
+                "MALICIOUS" { "DarkYellow" }
+                "CRITICAL" { "Magenta" }
+                default { "Gray" }
+            }
+            Write-Host ("  {0}: {1}" -f $_.Name, $_.Count) -ForegroundColor $levelColor
+        }
     }
     finally {
         Remove-Item $tempOut -ErrorAction SilentlyContinue
