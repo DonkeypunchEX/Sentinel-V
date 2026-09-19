@@ -139,7 +139,9 @@ class SentinelVSystem:
         # Forensic capture
         self.forensics_enabled = self.config.get("forensics_enabled", False)
         self.forensics = ForensicCapture(
-            max_payload_size=self.config.get("forensics_max_payload_size", 100 * 1024 * 1024),
+            max_payload_size=self.config.get(
+                "forensics_max_payload_size", 100 * 1024 * 1024
+            ),
             extract_iocs=self.config.get("forensics_extract_iocs", True),
         )
 
@@ -154,6 +156,10 @@ class SentinelVSystem:
         # System state
         self.mode = SystemMode(self.config.get("system_mode", "production"))
         self.defense_level = DefenseLevel(self.config.get("defense_level", "standard"))
+        # The configured level is the floor: resource pressure never takes the
+        # system below it, and elevated levels relax back to it.
+        self.baseline_defense_level = self.defense_level
+        self.resource_warning_active = False
         self.status = "initializing"
         self.start_time = datetime.now()
 
@@ -408,14 +414,14 @@ class SentinelVSystem:
         source_ip = event.get("source_ip", "")
         threat_level = assessment.get("threat_level", "BENIGN")
         escalation_step = response.get("escalation_step", 0)
-        
+
         # Always block on decoy interaction or CRITICAL threats
         if is_decoy or threat_level == "CRITICAL" or escalation_step >= 3:
             self.active_defense.block_ip(
                 ip=source_ip,
                 reason=f"Threat detected: {threat_level} (decoy={is_decoy})",
             )
-        
+
         # Rate limit on MALICIOUS threats
         if threat_level == "MALICIOUS" or escalation_step >= 2:
             dest_port = event.get("dest_port", 0)
@@ -427,7 +433,7 @@ class SentinelVSystem:
                     rate="10/min",
                     reason=f"Suspicious activity: {threat_level}",
                 )
-        
+
         # Isolate internal hosts that are compromised
         dest_ip = event.get("dest_ip", "")
         if threat_level == "CRITICAL" and self._is_external_ip(dest_ip):
@@ -445,7 +451,7 @@ class SentinelVSystem:
         threat_id = assessment.get("threat_id", "")
         source_ip = event.get("source_ip", "")
         threat_level = assessment.get("threat_level", "BENIGN")
-        
+
         # Capture payloads if present
         if "payload" in event:
             payload = event["payload"]
@@ -459,7 +465,7 @@ class SentinelVSystem:
                         "event_type": event.get("event_type", "unknown"),
                     },
                 )
-        
+
         # For CRITICAL threats, start a session log
         if threat_level == "CRITICAL":
             session_id = self.forensics.start_session(
@@ -471,50 +477,6 @@ class SentinelVSystem:
                 },
             )
             assessment["forensic_session_id"] = session_id
-        """Apply active defense measures based on threat assessment.
-        
-        This method triggers firewall blocks, host isolation, or rate limiting
-        when active defense is enabled and enforce_mode is True.
-        
-        Args:
-            assessment: The threat assessment dictionary
-            response: The response plan from AutonomousResponseEngine
-            is_decoy: Whether this was a decoy interaction
-        """
-        if not self.active_defense_enabled:
-            return
-        
-        event = assessment.get("event", {})
-        source_ip = event.get("source_ip", "")
-        threat_level = assessment.get("threat_level", "BENIGN")
-        escalation_step = response.get("escalation_step", 0)
-        
-        # Always block on decoy interaction or CRITICAL threats
-        if is_decoy or threat_level == "CRITICAL" or escalation_step >= 3:
-            self.active_defense.block_ip(
-                ip=source_ip,
-                reason=f"Threat detected: {threat_level} (decoy={is_decoy})",
-            )
-        
-        # Rate limit on MALICIOUS threats
-        if threat_level == "MALICIOUS" or escalation_step >= 2:
-            dest_port = event.get("dest_port", 0)
-            if dest_port > 0:
-                self.active_defense.rate_limit(
-                    source=source_ip,
-                    port=dest_port,
-                    protocol=event.get("protocol", "tcp"),
-                    rate="10/min",
-                    reason=f"Suspicious activity: {threat_level}",
-                )
-        
-        # Isolate internal hosts that are compromised
-        dest_ip = event.get("dest_ip", "")
-        if threat_level == "CRITICAL" and self._is_external_ip(dest_ip):
-            self.active_defense.isolate_host(
-                ip=dest_ip,
-                reason=f"Critical threat detected: {threat_level}",
-            )
 
     def _generate_event_id(self) -> str:
         """Generate unique event identifier"""
@@ -663,25 +625,36 @@ class SentinelVSystem:
     def _adjust_defenses(self, health_status: Dict[str, Any]) -> None:
         """Adjust defense levels based on health and threat load"""
 
-        if health_status["overall"] == "warning":
-            # Reduce defenses if system is stressed
-            if self.defense_level != DefenseLevel.PASSIVE:
-                self.defense_level = DefenseLevel.PASSIVE
-                logging.warning("Reduced defense level due to resource constraints")
+        # Resource pressure is reported, never used to lower defenses: an
+        # attacker who can exhaust host memory must not be able to make the
+        # defense system stand itself down. Shed optional work instead.
+        over_budget = health_status["overall"] == "warning"
+        if over_budget and not self.resource_warning_active:
+            logging.warning(
+                "Host over resource budget (%s); defense level unchanged",
+                ", ".join(health_status.get("issues", [])),
+            )
+        self.resource_warning_active = over_budget
 
-        # Adjust based on threat volume
-        recent_threats = len(
-            [
-                t
-                for t in self.threat_log
-                if (datetime.now() - datetime.fromisoformat(t["timestamp"])).seconds
-                < 300
-            ]
+        # Adjust based on threat volume. total_seconds(), not .seconds:
+        # .seconds drops the days component, so day-old threats counted as recent.
+        now = datetime.now()
+        recent_threats = sum(
+            1
+            for t in self.threat_log
+            if (now - datetime.fromisoformat(t["timestamp"])).total_seconds() < 300
         )
 
-        if recent_threats > 20 and self.defense_level != DefenseLevel.PARANOID:
-            self.defense_level = DefenseLevel.PARANOID
-            logging.warning("Elevated defense level due to high threat volume")
+        if recent_threats > 20:
+            if self.defense_level != DefenseLevel.PARANOID:
+                self.defense_level = DefenseLevel.PARANOID
+                logging.warning("Elevated defense level due to high threat volume")
+        elif self.defense_level != self.baseline_defense_level:
+            self.defense_level = self.baseline_defense_level
+            logging.info(
+                "Threat volume normal; defense level restored to %s",
+                self.defense_level.value,
+            )
 
     def _cleanup_old_data(self) -> None:
         """Clean up old data to prevent memory exhaustion"""

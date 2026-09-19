@@ -125,7 +125,7 @@ def start(
             overrides["active_defense_auto_block"] = auto_block
         if auto_isolate is not None:
             overrides["active_defense_auto_isolate"] = auto_isolate
-        
+
         if enforce:
             click.echo(
                 "WARNING: Active defense ENFORCE mode enabled. "
@@ -133,16 +133,18 @@ def start(
                 err=True,
             )
 
-    sentinel = create_sentinel_system(config, overrides=overrides, write_status_file=True)
+    sentinel = create_sentinel_system(
+        config, overrides=overrides, write_status_file=True
+    )
     sentinel.mode = SystemMode(mode)
 
     click.echo(f"Sentinel-V system started (ID: {sentinel.system_id})")
     click.echo(f"   Mode: {mode}")
     click.echo(f"   Defense Level: {sentinel.defense_level.value}")
     click.echo(f"   Log file: {log_path}")
-    
+
     if sentinel.active_defense_enabled:
-        click.echo(f"   Active Defense: ENABLED")
+        click.echo("   Active Defense: ENABLED")
         click.echo(f"   Enforce Mode: {sentinel.active_defense.enforce_mode}")
         click.echo(f"   Auto Block: {sentinel.active_defense.auto_block}")
         click.echo(f"   Auto Isolate: {sentinel.active_defense.auto_isolate}")
@@ -247,7 +249,7 @@ def status() -> None:
     click.echo("\nResource Usage:")
     for resource, usage in status_info["metrics"]["resource_usage"].items():
         click.echo(f"  {resource}: {usage:.1%}")
-    
+
     # Show active defense stats if available
     components = status_info.get("components", {})
     active_defense = components.get("active_defense")
@@ -256,60 +258,90 @@ def status() -> None:
         click.echo(f"  Enabled: {active_defense.get('enabled', False)}")
         click.echo(f"  Enforce Mode: {active_defense.get('enforce_mode', False)}")
         click.echo(f"  Blocked IPs: {active_defense.get('total_blocked_ips', 0)}")
-        click.echo(f"  Blocked Networks: {active_defense.get('total_blocked_networks', 0)}")
+        click.echo(
+            f"  Blocked Networks: {active_defense.get('total_blocked_networks', 0)}"
+        )
         click.echo(f"  Isolated Hosts: {active_defense.get('total_isolated_hosts', 0)}")
-        click.echo(f"  Rate Limit Rules: {active_defense.get('total_rate_limit_rules', 0)}")
+        click.echo(
+            f"  Rate Limit Rules: {active_defense.get('total_rate_limit_rules', 0)}"
+        )
 
 
 @cli.command()
 @click.argument("ip")
 @click.option("--reason", default="Manual block", help="Reason for blocking")
-@click.option("--duration", type=int, default=None, help="Duration in seconds (default: permanent)")
-def block_ip(ip: str, reason: str, duration: Optional[int]) -> None:
+@click.option(
+    "--duration",
+    type=int,
+    default=None,
+    help="Duration in seconds (default: permanent)",
+)
+@click.option(
+    "--enforce",
+    is_flag=True,
+    default=False,
+    help=(
+        "Actually modify the firewall. Without this flag the action is "
+        "logged only, matching `start`'s enforce default."
+    ),
+)
+def block_ip(ip: str, reason: str, duration: Optional[int], enforce: bool) -> None:
     """Manually block an IP address using active defense."""
+    if enforce:
+        click.echo("WARNING: --enforce is set. This will modify firewall rules.")
+
     sentinel = create_sentinel_system(
         None,
         overrides={
             "active_defense_enabled": True,
-            "active_defense_enforce": True,
-        }
+            "active_defense_enforce": enforce,
+        },
     )
-    
+
     success = sentinel.active_defense.block_ip(ip, reason, duration)
-    
+
     if success:
         click.echo(f"Successfully blocked IP: {ip}")
         click.echo(f"  Reason: {reason}")
         if duration:
             click.echo(f"  Duration: {duration} seconds")
         else:
-            click.echo(f"  Duration: Permanent")
+            click.echo("  Duration: Permanent")
     else:
         click.echo(f"Failed to block IP: {ip}", err=True)
-        click.echo(f"  Enforce mode may be disabled, or IP may already be blocked.")
-    
+        click.echo("  Enforce mode may be disabled, or IP may already be blocked.")
+
     sentinel.shutdown()
 
 
 @cli.command()
 @click.argument("ip")
-def unblock_ip(ip: str) -> None:
+@click.option(
+    "--enforce",
+    is_flag=True,
+    default=False,
+    help="Actually modify the firewall. Without this flag the action is logged only.",
+)
+def unblock_ip(ip: str, enforce: bool) -> None:
     """Remove a block on an IP address."""
+    if enforce:
+        click.echo("WARNING: --enforce is set. This will modify firewall rules.")
+
     sentinel = create_sentinel_system(
         None,
         overrides={
             "active_defense_enabled": True,
-            "active_defense_enforce": True,
-        }
+            "active_defense_enforce": enforce,
+        },
     )
-    
+
     success = sentinel.active_defense.unblock_ip(ip)
-    
+
     if success:
         click.echo(f"Successfully unblocked IP: {ip}")
     else:
         click.echo(f"Failed to unblock IP: {ip}", err=True)
-    
+
     sentinel.shutdown()
 
 
@@ -335,34 +367,36 @@ def deploy_decoys(network: str, count: int) -> None:
 @click.option("--limit", default=100, help="Number of recent actions to show")
 def active_defense_status(limit: int) -> None:
     """Show active defense status and recent actions."""
-    sentinel = create_sentinel_system(
-        None,
-        overrides={"active_defense_enabled": True}
-    )
-    
+    sentinel = create_sentinel_system(None, overrides={"active_defense_enabled": True})
+
     stats = sentinel.active_defense.get_statistics()
-    
+
     click.echo("Active Defense Status")
     click.echo("=" * 40)
     click.echo(f"Enforce Mode: {stats['enforce_mode']}")
     click.echo(f"Auto Block: {stats['auto_block']}")
     click.echo(f"Auto Isolate: {stats['auto_isolate']}")
     click.echo(f"Auto Rate Limit: {stats['auto_rate_limit']}")
-    click.echo(f"\nCounters:")
+    click.echo("\nCounters:")
     click.echo(f"  Blocked IPs: {stats['total_blocked_ips']}")
     click.echo(f"  Blocked Networks: {stats['total_blocked_networks']}")
     click.echo(f"  Isolated Hosts: {stats['total_isolated_hosts']}")
     click.echo(f"  Rate Limit Rules: {stats['total_rate_limit_rules']}")
     click.echo(f"  Total Actions: {stats['total_actions']}")
-    
+
     # Show recent actions
-    if stats['total_actions'] > 0:
+    if stats["total_actions"] > 0:
         click.echo(f"\nRecent Actions (last {limit}):")
         actions = sentinel.active_defense.get_action_history(limit)
         for action in actions:
-            status = "EXECUTED" if action['success'] and action['enforce_mode'] else "LOGGED"
-            click.echo(f"  [{action['timestamp']}] {action['action']} {action['target']} - {action['reason']} ({status})")
-    
+            status = (
+                "EXECUTED" if action["success"] and action["enforce_mode"] else "LOGGED"
+            )
+            click.echo(
+                f"  [{action['timestamp']}] {action['action']} {action['target']} - "
+                f"{action['reason']} ({status})"
+            )
+
     sentinel.shutdown()
 
 

@@ -16,8 +16,6 @@ All tarpit actions are passive and do not initiate connections
 to external systems.
 """
 
-import asyncio
-import ipaddress
 import json
 import logging
 import random
@@ -28,15 +26,20 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from .paths import tarpit_log_file
+
+# Cap on a single POST body the HTTP tarpit will buffer in memory,
+# regardless of the client-declared Content-Length.
+MAX_POST_BODY_BYTES = 10 * 1024 * 1024
 
 
 @dataclass
 class TarpitConnection:
     """Represents an active tarpit connection."""
+
     source_ip: str
     source_port: int
     target_ip: str
@@ -46,7 +49,7 @@ class TarpitConnection:
     end_time: Optional[str] = None
     bytes_sent: int = 0
     bytes_received: int = 0
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "source_ip": self.source_ip,
@@ -60,7 +63,7 @@ class TarpitConnection:
             "bytes_received": self.bytes_received,
             "duration": self.get_duration(),
         }
-    
+
     def get_duration(self) -> Optional[float]:
         """Get connection duration in seconds."""
         if self.end_time:
@@ -73,13 +76,14 @@ class TarpitConnection:
 @dataclass
 class TarpitStatistics:
     """Statistics for tarpit operations."""
+
     total_connections: int = 0
     active_connections: int = 0
     total_bytes_sent: int = 0
     total_bytes_received: int = 0
     total_time_wasted: float = 0.0  # seconds
     connections_by_ip: Dict[str, int] = field(default_factory=dict)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "total_connections": self.total_connections,
@@ -93,13 +97,13 @@ class TarpitStatistics:
 
 class TarpitEngine:
     """Manages tarpit services to waste attacker time.
-    
+
     Provides multiple types of tarpits:
     - TCP: Accepts connections but never sends data
     - HTTP: Serves fake content very slowly
     - SMB: Fake SMB server that delays responses
     - RDP: Fake RDP server that appears to negotiate but stalls
-    
+
     All tarpits are designed to:
     - Appear legitimate to automated scanners
     - Waste attacker time and resources
@@ -114,7 +118,7 @@ class TarpitEngine:
         connection_timeout: int = 300,  # 5 minutes
     ):
         """Initialize the Tarpit Engine.
-        
+
         Args:
             log_file: Path to log file
             max_connections: Maximum number of concurrent connections
@@ -123,20 +127,20 @@ class TarpitEngine:
         self.log_file = log_file or str(tarpit_log_file())
         self.max_connections = max_connections
         self.connection_timeout = connection_timeout
-        
+
         # State tracking
         self.active_connections: Dict[Tuple[str, int, str, int], TarpitConnection] = {}
         self.connection_history: List[TarpitConnection] = []
         self.statistics = TarpitStatistics()
-        
+
         # Tarpit servers
         self.tcp_tarpits: Dict[Tuple[str, int], socket.socket] = {}
         self.http_tarpits: Dict[Tuple[str, int], HTTPServer] = {}
         self.http_tarpit_threads: Dict[Tuple[str, int], threading.Thread] = {}
-        
+
         # Setup logging
         self._setup_logging()
-        
+
         logging.info(
             f"TarpitEngine initialized (max_connections={self.max_connections}, "
             f"connection_timeout={self.connection_timeout})"
@@ -145,58 +149,59 @@ class TarpitEngine:
     def _setup_logging(self) -> None:
         """Configure logging for tarpit operations."""
         Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Create a dedicated logger
         self.logger = logging.getLogger("sentinel_v.tarpit")
         self.logger.setLevel(logging.INFO)
-        
+
         # File handler
         file_handler = logging.FileHandler(self.log_file)
         file_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s"
-        )
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
     def start_tcp_tarpit(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 9000,
     ) -> bool:
         """Start a TCP tarpit on the specified host and port.
-        
+
         The tarpit accepts connections but never sends any data,
         keeping the attacker waiting indefinitely (or until timeout).
-        
+
         Args:
-            host: Host to bind to
+            host: Host to bind to. Defaults to loopback - exposing a
+                tarpit on a routable interface is an explicit operator
+                decision, not a default (same convention as
+                DynamicHoneypot in deception.py).
             port: Port to listen on
-            
+
         Returns:
             True if tarpit started successfully, False otherwise
         """
         if (host, port) in self.tcp_tarpits:
             logging.warning(f"TCP tarpit already running on {host}:{port}")
             return False
-        
+
         try:
             # Create socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.listen(self.max_connections)
-            
+
             # Store socket
             self.tcp_tarpits[(host, port)] = sock
-            
+
             # Start accept thread
             threading.Thread(
                 target=self._tcp_tarpit_accept_loop,
                 args=(host, port, sock),
                 daemon=True,
             ).start()
-            
+
             logging.info(f"TCP tarpit started on {host}:{port}")
             return True
         except Exception as e:
@@ -215,9 +220,21 @@ class TarpitEngine:
                 client_sock, client_addr = sock.accept()
                 client_ip = client_addr[0]
                 client_port = client_addr[1]
-                
+
+                # Enforce the configured connection cap here - passing
+                # max_connections to listen() only bounds the kernel's
+                # pending-accept backlog, not how many connections this
+                # loop goes on to track and hand a thread to.
+                if len(self.active_connections) >= self.max_connections:
+                    logging.warning(
+                        f"TCP tarpit: rejecting {client_ip}:{client_port}, "
+                        f"at max_connections={self.max_connections}"
+                    )
+                    client_sock.close()
+                    continue
+
                 logging.info(f"TCP tarpit: connection from {client_ip}:{client_port}")
-                
+
                 # Track connection
                 conn = TarpitConnection(
                     source_ip=client_ip,
@@ -233,14 +250,14 @@ class TarpitEngine:
                 self.statistics.connections_by_ip[client_ip] = (
                     self.statistics.connections_by_ip.get(client_ip, 0) + 1
                 )
-                
+
                 # Handle connection in a separate thread
                 threading.Thread(
                     target=self._tcp_tarpit_handle_connection,
                     args=(client_sock, client_ip, client_port, host, port),
                     daemon=True,
                 ).start()
-                
+
             except Exception as e:
                 if (host, port) in self.tcp_tarpits:
                     logging.error(f"Error in TCP tarpit accept loop: {e}")
@@ -258,40 +275,39 @@ class TarpitEngine:
         try:
             # Set timeout
             client_sock.settimeout(self.connection_timeout)
-            
-            # Just hold the connection open without sending anything
-            # This wastes the attacker's time
-            try:
-                while True:
-                    # Try to receive data (but don't respond)
-                    try:
-                        data = client_sock.recv(1024)
-                        if not data:
-                            break
-                        # Update statistics
-                        key = (client_ip, client_port, host, port)
-                        if key in self.active_connections:
-                            self.active_connections[key].bytes_received += len(data)
-                            self.statistics.total_bytes_received += len(data)
-                    except socket.timeout:
-                        # Connection timed out
+
+            # Just hold the connection open without sending anything.
+            # This wastes the attacker's time. No inner catch-all here:
+            # socket.timeout is the only expected exception (handled
+            # below) and anything else should reach the outer handler's
+            # logging rather than vanish silently.
+            while True:
+                # Try to receive data (but don't respond)
+                try:
+                    data = client_sock.recv(1024)
+                    if not data:
                         break
-                    
-                    # Sleep briefly to avoid busy waiting
-                    time.sleep(0.1)
-                    
-            except Exception:
-                pass
-            
+                    # Update statistics
+                    key = (client_ip, client_port, host, port)
+                    if key in self.active_connections:
+                        self.active_connections[key].bytes_received += len(data)
+                        self.statistics.total_bytes_received += len(data)
+                except socket.timeout:
+                    # Connection timed out
+                    break
+
+                # Sleep briefly to avoid busy waiting
+                time.sleep(0.1)
+
         except Exception as e:
             logging.error(f"Error handling TCP tarpit connection: {e}")
         finally:
-            # Close connection
+            # Close connection - already broken/closing, nothing to act on
             try:
                 client_sock.close()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
-            
+
             # Update connection end time
             key = (client_ip, client_port, host, port)
             if key in self.active_connections:
@@ -299,12 +315,12 @@ class TarpitEngine:
                 conn.end_time = datetime.now().isoformat()
                 self.connection_history.append(conn)
                 self.statistics.active_connections -= 1
-                
+
                 # Update time wasted
                 duration = conn.get_duration()
                 if duration:
                     self.statistics.total_time_wasted += duration
-            
+
             logging.info(
                 f"TCP tarpit: connection closed from {client_ip}:{client_port} "
                 f"(duration: {conn.get_duration() or 0:.1f}s)"
@@ -312,18 +328,18 @@ class TarpitEngine:
 
     def stop_tcp_tarpit(self, host: str, port: int) -> bool:
         """Stop a TCP tarpit.
-        
+
         Args:
             host: Host the tarpit is bound to
             port: Port the tarpit is listening on
-            
+
         Returns:
             True if tarpit stopped successfully, False otherwise
         """
         key = (host, port)
         if key not in self.tcp_tarpits:
             return True
-        
+
         try:
             sock = self.tcp_tarpits.pop(key)
             sock.close()
@@ -335,32 +351,36 @@ class TarpitEngine:
 
     def start_http_tarpit(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 8081,
     ) -> bool:
         """Start an HTTP tarpit on the specified host and port.
-        
+
         The tarpit serves fake content very slowly, wasting attacker time.
-        
+
         Args:
-            host: Host to bind to
+            host: Host to bind to. Defaults to loopback - exposing a
+                tarpit on a routable interface is an explicit operator
+                decision, not a default.
             port: Port to listen on
-            
+
         Returns:
             True if tarpit started successfully, False otherwise
         """
         if (host, port) in self.http_tarpits:
             logging.warning(f"HTTP tarpit already running on {host}:{port}")
             return False
-        
+
         try:
             # Create HTTP server with custom handler
-            handler_class = lambda *args: TarpitHTTPHandler(*args, tarpit=self)
+            def handler_class(*args: Any) -> "TarpitHTTPHandler":
+                return TarpitHTTPHandler(*args, tarpit=self)
+
             server = HTTPServer((host, port), handler_class)
-            
+
             # Store server
             self.http_tarpits[(host, port)] = server
-            
+
             # Start server in a thread
             thread = threading.Thread(
                 target=server.serve_forever,
@@ -368,7 +388,7 @@ class TarpitEngine:
             )
             self.http_tarpit_threads[(host, port)] = thread
             thread.start()
-            
+
             logging.info(f"HTTP tarpit started on {host}:{port}")
             return True
         except Exception as e:
@@ -377,26 +397,25 @@ class TarpitEngine:
 
     def stop_http_tarpit(self, host: str, port: int) -> bool:
         """Stop an HTTP tarpit.
-        
+
         Args:
             host: Host the tarpit is bound to
             port: Port the tarpit is listening on
-            
+
         Returns:
             True if tarpit stopped successfully, False otherwise
         """
         key = (host, port)
         if key not in self.http_tarpits:
             return True
-        
+
         try:
             server = self.http_tarpits.pop(key)
             server.shutdown()
-            
-            if key in self.http_tarpit_threads:
-                thread = self.http_tarpit_threads.pop(key)
-                # Thread will exit when server shuts down
-            
+
+            # Thread will exit on its own once the server shuts down.
+            self.http_tarpit_threads.pop(key, None)
+
             logging.info(f"HTTP tarpit stopped on {host}:{port}")
             return True
         except Exception as e:
@@ -405,7 +424,7 @@ class TarpitEngine:
 
     def get_active_connections(self) -> List[Dict[str, Any]]:
         """Get list of currently active tarpit connections.
-        
+
         Returns:
             List of active connection dictionaries
         """
@@ -413,10 +432,10 @@ class TarpitEngine:
 
     def get_connection_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent connection history.
-        
+
         Args:
             limit: Maximum number of connections to return
-            
+
         Returns:
             List of connection dictionaries
         """
@@ -424,7 +443,7 @@ class TarpitEngine:
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get tarpit statistics.
-        
+
         Returns:
             Dictionary with tarpit statistics
         """
@@ -432,10 +451,10 @@ class TarpitEngine:
 
     def get_top_attackers(self, limit: int = 10) -> List[Tuple[str, int]]:
         """Get top attacking IPs by connection count.
-        
+
         Args:
             limit: Maximum number of IPs to return
-            
+
         Returns:
             List of (ip, count) tuples sorted by count descending
         """
@@ -448,92 +467,96 @@ class TarpitEngine:
 
     def reset(self) -> None:
         """Reset all tarpit state (for testing)."""
-        # Stop all tarpits
+        # Stop all tarpits - best-effort close, state is being torn down
         for key, sock in self.tcp_tarpits.items():
             try:
                 sock.close()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         self.tcp_tarpits.clear()
-        
+
         for key, server in self.http_tarpits.items():
             try:
                 server.shutdown()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         self.http_tarpits.clear()
         self.http_tarpit_threads.clear()
-        
+
         # Clear connections
         self.active_connections.clear()
         self.connection_history.clear()
         self.statistics = TarpitStatistics()
-        
+
         logging.info("TarpitEngine reset")
 
 
 class TarpitHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the tarpit.
-    
+
     Serves fake content very slowly to waste attacker time.
     """
-    
+
     # Class-level storage for tarpit engine reference
     tarpit: Optional[TarpitEngine] = None
-    
-    def __init__(self, *args, **kwargs):
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.tarpit = kwargs.pop("tarpit", None)
         super().__init__(*args, **kwargs)
 
-    def log_message(self, format, *args) -> None:
+    def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of print."""
         if self.tarpit:
             self.tarpit.logger.info(f"HTTP Tarpit: {format % args}")
+
+    @staticmethod
+    def _host_port(address: Any) -> Tuple[str, int]:
+        """Extract (host, port) from a socket address.
+
+        BaseServer.server_address / BaseRequestHandler.client_address are
+        typed as a union that also covers AF_UNIX (str) addresses; this
+        tarpit only ever binds AF_INET/AF_INET6 sockets, so narrowing
+        here once keeps every call site simple.
+        """
+        return str(address[0]), int(address[1])
 
     def _track_connection(self, method: str, path: str) -> None:
         """Track an HTTP connection."""
         if not self.tarpit:
             return
-        
-        client_ip = self.client_address[0]
-        client_port = self.client_address[1]
-        
+
+        client_ip, client_port = self._host_port(self.client_address)
+        target_ip, target_port = self._host_port(self.server.server_address)
+
         # Create connection record
         conn = TarpitConnection(
             source_ip=client_ip,
             source_port=client_port,
-            target_ip=self.server.server_address[0],
-            target_port=self.server.server_address[1],
+            target_ip=target_ip,
+            target_port=target_port,
             protocol="http",
             start_time=datetime.now().isoformat(),
         )
-        
-        key = (client_ip, client_port, 
-               self.server.server_address[0], 
-               self.server.server_address[1])
+
+        key = (client_ip, client_port, target_ip, target_port)
         self.tarpit.active_connections[key] = conn
         self.tarpit.statistics.active_connections += 1
         self.tarpit.statistics.total_connections += 1
         self.tarpit.statistics.connections_by_ip[client_ip] = (
             self.tarpit.statistics.connections_by_ip.get(client_ip, 0) + 1
         )
-        
-        logging.info(
-            f"HTTP tarpit: {method} {path} from {client_ip}:{client_port}"
-        )
+
+        logging.info(f"HTTP tarpit: {method} {path} from {client_ip}:{client_port}")
 
     def _update_connection(self, bytes_sent: int = 0, bytes_received: int = 0) -> None:
         """Update connection statistics."""
         if not self.tarpit:
             return
-        
-        client_ip = self.client_address[0]
-        client_port = self.client_address[1]
-        
-        key = (client_ip, client_port,
-               self.server.server_address[0],
-               self.server.server_address[1])
-        
+
+        client_ip, client_port = self._host_port(self.client_address)
+        target_ip, target_port = self._host_port(self.server.server_address)
+        key = (client_ip, client_port, target_ip, target_port)
+
         if key in self.tarpit.active_connections:
             conn = self.tarpit.active_connections[key]
             conn.bytes_sent += bytes_sent
@@ -545,20 +568,17 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
         """End connection tracking."""
         if not self.tarpit:
             return
-        
-        client_ip = self.client_address[0]
-        client_port = self.client_address[1]
-        
-        key = (client_ip, client_port,
-               self.server.server_address[0],
-               self.server.server_address[1])
-        
+
+        client_ip, client_port = self._host_port(self.client_address)
+        target_ip, target_port = self._host_port(self.server.server_address)
+        key = (client_ip, client_port, target_ip, target_port)
+
         if key in self.tarpit.active_connections:
             conn = self.tarpit.active_connections.pop(key)
             conn.end_time = datetime.now().isoformat()
             self.tarpit.connection_history.append(conn)
             self.tarpit.statistics.active_connections -= 1
-            
+
             # Update time wasted
             duration = conn.get_duration()
             if duration:
@@ -567,14 +587,15 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Handle GET requests with deliberate slowness."""
         self._track_connection("GET", self.path)
-        
+
         # Parse URL
         parsed = urlparse(self.path)
-        
-        # Delay before sending response
-        delay = random.uniform(5.0, 15.0)  # 5-15 seconds
+
+        # Delay before sending response - timing jitter, not a security
+        # value, so the standard (non-cryptographic) RNG is fine here.
+        delay = random.uniform(5.0, 15.0)  # nosec B311 - 5-15 seconds
         time.sleep(delay)
-        
+
         # Send very slow response
         if parsed.path == "/":
             self._send_slow_index()
@@ -586,15 +607,20 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
             self._send_slow_php_response()
         else:
             self._send_slow_404()
-        
+
         self._end_connection()
 
     def do_POST(self) -> None:
         """Handle POST requests with deliberate slowness."""
         self._track_connection("POST", self.path)
-        
-        # Read the body (slowly)
-        content_length = int(self.headers.get("Content-Length", 0))
+
+        # Read the body (slowly), capped so a declared multi-GB
+        # Content-Length can't be used to exhaust the defender's own
+        # memory - the whole point is wasting the attacker's time, not
+        # the host running the tarpit.
+        content_length = min(
+            int(self.headers.get("Content-Length", 0)), MAX_POST_BODY_BYTES
+        )
         body = b""
         if content_length > 0:
             # Read in small chunks with delays
@@ -607,33 +633,34 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
                 body += chunk
                 remaining -= len(chunk)
                 time.sleep(0.1)  # Delay between chunks
-        
+
         self._update_connection(bytes_received=len(body))
-        
-        # Delay before sending response
-        delay = random.uniform(10.0, 30.0)  # 10-30 seconds
+
+        # Delay before sending response - timing jitter, not a security value
+        delay = random.uniform(10.0, 30.0)  # nosec B311 - 10-30 seconds
         time.sleep(delay)
-        
+
         # Send response
         self._send_slow_response(b"POST received\n")
-        
+
         self._end_connection()
 
-    def _send_slow_response(self, content: bytes) -> None:
+    def _send_slow_response(self, content: bytes, status_code: int = 200) -> None:
         """Send a response very slowly."""
-        self.send_response(200)
+        self.send_response(status_code)
         self.send_header("Content-type", "text/html")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        
+
         # Send data in small chunks with delays
         chunk_size = 100
         for i in range(0, len(content), chunk_size):
-            chunk = content[i:i+chunk_size]
+            end = i + chunk_size
+            chunk = content[i:end]
             self.wfile.write(chunk)
             self.wfile.flush()
             time.sleep(0.1)  # Delay between chunks
-        
+
         self._update_connection(bytes_sent=len(content))
 
     def _send_slow_index(self) -> None:
@@ -672,7 +699,7 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
         body { font-family: Arial, sans-serif; margin: 40px; }
         .login-box { border: 1px solid #ccc; padding: 20px; width: 300px; }
         input { width: 100%; padding: 8px; margin: 5px 0; }
-        button { width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; }
+        button { width: 100%; padding: 10px; background: #4CAF50; color: white; }
     </style>
 </head>
 <body>
@@ -693,28 +720,32 @@ class TarpitHTTPHandler(BaseHTTPRequestHandler):
 
     def _send_slow_api_response(self) -> None:
         """Send a fake API response very slowly."""
-        json_response = json.dumps({
-            "status": "success",
-            "version": "1.0.0",
-            "data": {
-                "users": [
-                    {"id": 1, "username": "admin", "role": "administrator"},
-                    {"id": 2, "username": "user1", "role": "user"},
-                    {"id": 3, "username": "backup", "role": "user"},
-                ],
-                "databases": [
-                    {"name": "production", "host": "localhost"},
-                    {"name": "staging", "host": "localhost"},
-                    {"name": "backup", "host": "localhost"},
-                ],
-                "config": {
-                    "debug": True,
-                    "secret_key": "sk-1234567890abcdef",
-                    "api_key": "ak-9876543210fedcba",
+        json_response = json.dumps(
+            {
+                "status": "success",
+                "version": "1.0.0",
+                "data": {
+                    "users": [
+                        {"id": 1, "username": "admin", "role": "administrator"},
+                        {"id": 2, "username": "user1", "role": "user"},
+                        {"id": 3, "username": "backup", "role": "user"},
+                    ],
+                    "databases": [
+                        {"name": "production", "host": "localhost"},
+                        {"name": "staging", "host": "localhost"},
+                        {"name": "backup", "host": "localhost"},
+                    ],
+                    "config": {
+                        "debug": True,
+                        # Fake bait values served to attackers, not real
+                        # secrets - not a hardcoded credential in this repo.
+                        "secret_key": "sk-1234567890abcdef",  # nosec B105
+                        "api_key": "ak-9876543210fedcba",
+                    },
                 },
-            },
-            "timestamp": datetime.now().isoformat(),
-        }).encode()
+                "timestamp": datetime.now().isoformat(),
+            }
+        ).encode()
         self._send_slow_response(json_response)
 
     def _send_slow_php_response(self) -> None:

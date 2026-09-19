@@ -17,15 +17,16 @@ Additional deception capabilities:
 import ipaddress
 import json
 import logging
+import secrets
 import socket
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urlparse
 
-from .paths import honeypot_log_file, forensics_dir
+from .paths import honeypot_log_file
 
 
 class DeceptionNetwork:
@@ -36,11 +37,11 @@ class DeceptionNetwork:
         self.active = False
         self.interactions: List[Dict[str, Any]] = []
         self.decoys = self._allocate_decoys(network_range, max(1, decoy_count))
-        
+
         # Canary tokens
         self.canary_tokens: Set[str] = set()
         self.honey_files: List[Dict[str, Any]] = []
-        
+
         # HTTP honeypot
         self.http_honeypot_port: Optional[int] = None
         self.http_honeypot_thread: Optional[threading.Thread] = None
@@ -106,62 +107,66 @@ class DeceptionNetwork:
 
     def generate_canary_tokens(self, count: int = 10) -> List[str]:
         """Generate canary tokens (fake credentials, API keys, etc.).
-        
+
         These tokens can be placed in databases, config files, or documents.
         When an attacker uses a canary token, it triggers an alert.
-        
+
         Args:
             count: Number of tokens to generate
-            
+
         Returns:
             List of generated canary tokens
         """
-        import secrets
-        import string
-        
         tokens = []
         for i in range(count):
             # Generate different types of canary tokens
-            token_type = ["api_key", "password", "database_cred", "aws_key", "ssh_key"][i % 5]
-            
-            if token_type == "api_key":
+            token_type = ["api_key", "password", "database_cred", "aws_key", "ssh_key"][
+                i % 5
+            ]
+
+            # These compare against a fixed label, not a credential -
+            # bandit's B105 heuristic false-positives on the "password"
+            # and "aws_key" labels here, since the actual secret in each
+            # branch is always a freshly generated secrets.token_*() value.
+            if token_type == "api_key":  # nosec B105
                 token = f"sk-{secrets.token_urlsafe(32)}"
-            elif token_type == "password":
+            elif token_type == "password":  # nosec B105
                 token = f"pw-{secrets.token_urlsafe(16)}"
-            elif token_type == "database_cred":
-                token = f"dbuser:{secrets.token_urlsafe(8)}:pass:{secrets.token_urlsafe(16)}"
-            elif token_type == "aws_key":
+            elif token_type == "database_cred":  # nosec B105
+                token = (
+                    f"dbuser:{secrets.token_urlsafe(8)}:"
+                    f"pass:{secrets.token_urlsafe(16)}"
+                )
+            elif token_type == "aws_key":  # nosec B105
                 token = f"AKIA{secrets.token_hex(16).upper()}"
-            elif token_type == "ssh_key":
+            elif token_type == "ssh_key":  # nosec B105
                 token = f"ssh-rsa {secrets.token_urlsafe(40)} user@host"
             else:
                 token = secrets.token_urlsafe(32)
-            
+
             self.canary_tokens.add(token)
             tokens.append(token)
-            
+
             logging.info(f"Generated canary token: {token_type}={token[:20]}...")
-        
+
         return tokens
 
     def deploy_honey_files(self, directory: str, count: int = 5) -> List[Path]:
         """Deploy fake files with embedded canary tokens.
-        
+
         Creates files that look valuable to attackers but contain canary tokens
         that trigger alerts when accessed.
-        
+
         Args:
             directory: Directory to deploy honey files in
             count: Number of honey files to create
-            
+
         Returns:
             List of paths to created honey files
         """
-        import os
-        
         dir_path = Path(directory)
         dir_path.mkdir(parents=True, exist_ok=True)
-        
+
         honey_file_names = [
             "passwords.txt",
             "config.ini",
@@ -172,37 +177,61 @@ class DeceptionNetwork:
             "credentials.csv",
             "aws_config",
         ]
-        
+
         created_files = []
         for i in range(min(count, len(honey_file_names))):
             filename = honey_file_names[i]
             filepath = dir_path / filename
-            
+
             # Generate content with canary tokens
             token = self.generate_canary_tokens(1)[0]
-            
+
             if filename.endswith(".txt"):
-                content = f"# {filename}\n\n# WARNING: This file contains sensitive information\n\nusername: admin\npassword: {token}\n"
+                content = (
+                    f"# {filename}\n\n"
+                    "# WARNING: This file contains sensitive information\n\n"
+                    f"username: admin\npassword: {token}\n"
+                )
             elif filename.endswith(".ini"):
-                content = f"[database]\nuser = admin\npassword = {token}\nhost = localhost\nport = 3306\n"
+                content = (
+                    f"[database]\nuser = admin\npassword = {token}\n"
+                    "host = localhost\nport = 3306\n"
+                )
             elif filename.endswith(".json"):
-                content = json.dumps({
-                    "api_keys": {
-                        "production": token,
-                        "staging": secrets.token_urlsafe(16),
-                        "development": secrets.token_urlsafe(16),
-                    }
-                }, indent=2)
+                content = json.dumps(
+                    {
+                        "api_keys": {
+                            "production": token,
+                            "staging": secrets.token_urlsafe(16),
+                            "development": secrets.token_urlsafe(16),
+                        }
+                    },
+                    indent=2,
+                )
             elif filename.endswith(".sql"):
-                content = f"-- MySQL dump\n-- Host: localhost\n-- User: root\n\nCREATE DATABASE IF NOT EXISTS secret_db;\nUSE secret_db;\nCREATE TABLE users (id INT, username VARCHAR(255), password VARCHAR(255));\nINSERT INTO users VALUES (1, 'admin', '{token}');\n"
+                # Static bait content for a decoy file - never executed
+                # against a database, so this isn't an injection vector.
+                content = (
+                    "-- MySQL dump\n-- Host: localhost\n-- User: root\n\n"  # nosec B608
+                    "CREATE DATABASE IF NOT EXISTS secret_db;\nUSE secret_db;\n"
+                    "CREATE TABLE users (id INT, username VARCHAR(255), "
+                    "password VARCHAR(255));\n"
+                    f"INSERT INTO users VALUES (1, 'admin', '{token}');\n"
+                )
             elif filename.endswith(".csv"):
-                content = f"username,password,email\nadmin,{token},admin@example.com\nuser1,{secrets.token_urlsafe(16)},user1@example.com\n"
+                content = (
+                    "username,password,email\n"
+                    f"admin,{token},admin@example.com\n"
+                    f"user1,{secrets.token_urlsafe(16)},user1@example.com\n"
+                )
             else:
-                content = f"This file contains sensitive information. Access token: {token}"
-            
+                content = (
+                    f"This file contains sensitive information. Access token: {token}"
+                )
+
             # Write file
             filepath.write_text(content)
-            
+
             # Track honey file
             honey_file = {
                 "path": str(filepath),
@@ -212,17 +241,17 @@ class DeceptionNetwork:
             }
             self.honey_files.append(honey_file)
             created_files.append(filepath)
-            
+
             logging.info(f"Deployed honey file: {filepath}")
-        
+
         return created_files
 
     def check_canary_token(self, token: str) -> bool:
         """Check if a token is a canary token.
-        
+
         Args:
             token: Token to check
-            
+
         Returns:
             True if the token is a canary token, False otherwise
         """
@@ -233,50 +262,53 @@ class DeceptionNetwork:
 
     def check_honey_file_access(self, filepath: str) -> Optional[str]:
         """Check if a file is a honey file and return its canary token.
-        
+
         Args:
             filepath: Path to the file being accessed
-            
+
         Returns:
             Canary token if this is a honey file, None otherwise
         """
         for honey_file in self.honey_files:
             if honey_file["path"] == filepath:
                 logging.warning(f"Honey file accessed: {filepath}")
-                return honey_file["canary_token"]
+                return str(honey_file["canary_token"])
         return None
 
-    def start_http_honeypot(self, port: int = 8080, host: str = "0.0.0.0") -> bool:
+    def start_http_honeypot(self, port: int = 8080, host: str = "127.0.0.1") -> bool:
         """Start an HTTP honeypot server.
-        
+
         Creates a fake web server that logs all requests and can serve
         fake responses to waste attacker time.
-        
+
         Args:
             port: Port to listen on
-            host: Host to bind to
-            
+            host: Host to bind to. Defaults to loopback, matching
+                DynamicHoneypot's convention in this same module -
+                exposing a honeypot on a routable interface is an
+                explicit operator decision, not a default.
+
         Returns:
             True if server started successfully, False otherwise
         """
         if self.http_honeypot_server is not None:
             logging.warning("HTTP honeypot already running")
             return False
-        
+
         try:
             self.http_honeypot_port = port
             self.http_honeypot_server = HTTPServer(
                 (host, port),
                 lambda *args: HoneypotHTTPHandler(*args, deception_net=self),
             )
-            
+
             # Start server in a thread
             self.http_honeypot_thread = threading.Thread(
                 target=self.http_honeypot_server.serve_forever,
                 daemon=True,
             )
             self.http_honeypot_thread.start()
-            
+
             logging.info(f"HTTP honeypot started on {host}:{port}")
             return True
         except Exception as e:
@@ -285,13 +317,13 @@ class DeceptionNetwork:
 
     def stop_http_honeypot(self) -> bool:
         """Stop the HTTP honeypot server.
-        
+
         Returns:
             True if server stopped successfully, False otherwise
         """
         if self.http_honeypot_server is None:
             return True
-        
+
         try:
             self.http_honeypot_server.shutdown()
             self.http_honeypot_server = None
@@ -305,18 +337,18 @@ class DeceptionNetwork:
 
 class HoneypotHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the honeypot.
-    
+
     Logs all requests and serves fake responses to waste attacker time.
     """
-    
+
     # Class-level storage for deception network reference
     deception_net: Optional["DeceptionNetwork"] = None
-    
-    def __init__(self, *args, **kwargs):
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.deception_net = kwargs.pop("deception_net", None)
         super().__init__(*args, **kwargs)
 
-    def log_message(self, format, *args) -> None:
+    def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of print."""
         logging.warning(f"HTTP Honeypot: {format % args}")
 
@@ -324,13 +356,13 @@ class HoneypotHTTPHandler(BaseHTTPRequestHandler):
         """Parse the HTTP request and extract useful information."""
         parsed = urlparse(self.path)
         query_params = parse_qs(parsed.query)
-        
+
         # Extract headers
         headers = dict(self.headers)
-        
+
         # Extract client info
         client_ip = self.client_address[0]
-        
+
         # Check for canary tokens in request
         canary_token = None
         if self.deception_net:
@@ -348,7 +380,7 @@ class HoneypotHTTPHandler(BaseHTTPRequestHandler):
                 if self.deception_net.check_canary_token(value):
                     canary_token = value
                     break
-        
+
         return {
             "method": self.command,
             "path": parsed.path,
@@ -362,20 +394,20 @@ class HoneypotHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Handle GET requests."""
         request_info = self._parse_request()
-        
+
         # Log the request
         logging.warning(
             f"HTTP Honeypot GET: {request_info['method']} {request_info['path']} "
             f"from {request_info['client_ip']}"
         )
-        
+
         # If this is a canary token access, trigger an alert
         if request_info.get("canary_token"):
             logging.warning(
                 f"CANARY TOKEN USED: {request_info['canary_token'][:20]}... "
                 f"from {request_info['client_ip']}"
             )
-        
+
         # Serve a fake response based on the path
         if request_info["path"] == "/":
             self._send_fake_index()
@@ -391,28 +423,28 @@ class HoneypotHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Handle POST requests."""
         request_info = self._parse_request()
-        
+
         # Read the body
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
-        
+
         # Log the request
         logging.warning(
             f"HTTP Honeypot POST: {request_info['method']} {request_info['path']} "
             f"from {request_info['client_ip']} with {content_length} bytes"
         )
-        
+
         # If this is a canary token access, trigger an alert
         if request_info.get("canary_token"):
             logging.warning(
                 f"CANARY TOKEN USED: {request_info['canary_token'][:20]}... "
                 f"from {request_info['client_ip']}"
             )
-        
+
         # Log the body (truncated for logging)
         body_preview = body[:200].decode("utf-8", errors="replace")
         logging.debug(f"POST body preview: {body_preview}")
-        
+
         # Serve a fake response
         self._send_fake_response(b"POST received\n")
 
@@ -475,14 +507,16 @@ class HoneypotHTTPHandler(BaseHTTPRequestHandler):
 
     def _send_fake_api_response(self) -> None:
         """Send a fake API response."""
-        json_response = json.dumps({
-            "status": "success",
-            "data": {
-                "users": ["admin", "user1", "user2"],
-                "databases": ["production", "staging", "backup"],
-            },
-            "timestamp": datetime.now().isoformat(),
-        }).encode()
+        json_response = json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "users": ["admin", "user1", "user2"],
+                    "databases": ["production", "staging", "backup"],
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
+        ).encode()
         self._send_fake_response(json_response, 200)
 
     def _send_fake_php_response(self) -> None:
@@ -554,8 +588,6 @@ class DynamicHoneypot:
 
     def start(self) -> None:  # pragma: no cover - blocking network loop
         """Accept connections forever, one thread per client."""
-        import socket
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((self.host, self.port))
         sock.listen(100)

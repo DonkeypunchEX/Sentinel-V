@@ -215,3 +215,46 @@ def test_no_heartbeat_without_write_status_file_flag(
     sentinel.shutdown()
 
     assert not status_file().exists()
+
+
+# ── defense-level adjustment ──
+
+def _fake_threat(age_seconds: float) -> Dict[str, Any]:
+    from datetime import datetime, timedelta
+
+    ts = datetime.now() - timedelta(seconds=age_seconds)
+    return {"timestamp": ts.isoformat()}
+
+
+def test_resource_pressure_never_lowers_defense_level(system: SentinelVSystem) -> None:
+    from sentinel_v.core import DefenseLevel
+
+    baseline = system.defense_level
+    system._adjust_defenses({"overall": "warning", "issues": ["memory_over_budget"]})
+    assert system.defense_level == baseline
+    assert system.defense_level != DefenseLevel.PASSIVE
+    assert system.resource_warning_active is True
+
+
+def test_high_threat_volume_elevates_then_restores_baseline(
+    system: SentinelVSystem,
+) -> None:
+    from sentinel_v.core import DefenseLevel
+
+    baseline = system.baseline_defense_level
+    system.threat_log.extend(_fake_threat(10) for _ in range(21))
+    system._adjust_defenses({"overall": "healthy", "issues": []})
+    assert system.defense_level == DefenseLevel.PARANOID
+
+    system.threat_log.clear()
+    system._adjust_defenses({"overall": "healthy", "issues": []})
+    assert system.defense_level == baseline
+
+
+def test_day_old_threats_are_not_counted_as_recent(system: SentinelVSystem) -> None:
+    from sentinel_v.core import DefenseLevel
+
+    # 1 day + 10s old: timedelta.seconds == 10, total_seconds() == 86410.
+    system.threat_log.extend(_fake_threat(86410) for _ in range(21))
+    system._adjust_defenses({"overall": "healthy", "issues": []})
+    assert system.defense_level != DefenseLevel.PARANOID

@@ -12,16 +12,15 @@ reacting to events.
 """
 
 import hashlib
-import json
 import logging
 import platform
-import subprocess
+import subprocess  # nosec B404 - read-only diagnostic commands, no shell
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .paths import state_dir
 
@@ -29,6 +28,7 @@ from .paths import state_dir
 @dataclass
 class IoC:
     """Represents an Indicator of Compromise."""
+
     ioc_type: str  # ip, domain, hash, filename, etc.
     value: str
     description: str
@@ -37,7 +37,7 @@ class IoC:
     first_seen: str
     last_seen: str
     tags: List[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "ioc_type": self.ioc_type,
@@ -54,13 +54,14 @@ class IoC:
 @dataclass
 class ScanResult:
     """Represents the result of a threat hunt scan."""
+
     scan_type: str
     start_time: str
     end_time: str
     findings: List[Dict[str, Any]]
     total_items_scanned: int
     total_findings: int
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "scan_type": self.scan_type,
@@ -74,7 +75,7 @@ class ScanResult:
 
 class ThreatHunter:
     """Proactively hunts for threats on the system.
-    
+
     Provides methods to scan for:
     - Malicious processes
     - Suspicious network connections
@@ -95,25 +96,29 @@ class ThreatHunter:
             "a9993e364706816aba3e25717850c26c9cd0d89d": "Test Malware 2",
         },
         "sha256": {
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": "EICAR Test File",
-            "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0ff": "Test Malware 3",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": (
+                "EICAR Test File"
+            ),
+            "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0ff": (
+                "Test Malware 3"
+            ),
         },
     }
-    
+
     # Known malicious IPs (example data)
     KNOWN_MALICIOUS_IPS = {
         "1.1.1.1": "Known C2 Server",
         "2.2.2.2": "Known Scanner",
         "3.3.3.3": "Known Botnet",
     }
-    
+
     # Known malicious domains
     KNOWN_MALICIOUS_DOMAINS = {
         "evil.com": "Known Malware Domain",
         "bad-actor.net": "Known C2 Domain",
         "malware-server.org": "Known Malware Distribution",
     }
-    
+
     # Suspicious process names
     SUSPICIOUS_PROCESS_NAMES = {
         "mimikatz": "Credential Dumping Tool",
@@ -136,7 +141,7 @@ class ThreatHunter:
         "wscript": "Script Execution (abused by attackers)",
         "cscript": "Script Execution (abused by attackers)",
     }
-    
+
     # Suspicious port combinations
     SUSPICIOUS_PORTS = {
         4444: "Metasploit",
@@ -154,33 +159,33 @@ class ThreatHunter:
         self,
         ioc_feeds: Optional[List[str]] = None,
         scan_interval: int = 300,  # 5 minutes
-        state_dir: Optional[str] = None,
+        state_dir_override: Optional[str] = None,
     ):
         """Initialize the Threat Hunter.
-        
+
         Args:
             ioc_feeds: List of URLs to load IoC feeds from
             scan_interval: Interval in seconds between automatic scans
-            state_dir: Directory for storing state and cache
+            state_dir_override: Directory for storing state and cache
         """
         self.ioc_feeds = ioc_feeds or []
         self.scan_interval = scan_interval
-        self.state_dir = Path(state_dir or str(state_dir())) / "threat_hunter"
+        self.state_dir = Path(state_dir_override or str(state_dir())) / "threat_hunter"
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # IoC storage
         self.iocs: Dict[str, IoC] = {}  # ioc_type:value -> IoC
         self._load_builtin_iocs()
-        
+
         # Scan history
         self.scan_history: List[ScanResult] = []
-        
+
         # Platform detection
         self.platform = platform.system().lower()
-        
+
         # Load external IoC feeds
         self._load_ioc_feeds()
-        
+
         logging.info(
             f"ThreatHunter initialized (platform={self.platform}, "
             f"ioc_feeds={len(self.ioc_feeds)}, "
@@ -199,7 +204,7 @@ class ThreatHunter:
                     confidence=0.9,
                     source="builtin",
                 )
-        
+
         # Load malicious IPs
         for ip, description in self.KNOWN_MALICIOUS_IPS.items():
             self._add_ioc(
@@ -209,7 +214,7 @@ class ThreatHunter:
                 confidence=0.9,
                 source="builtin",
             )
-        
+
         # Load malicious domains
         for domain, description in self.KNOWN_MALICIOUS_DOMAINS.items():
             self._add_ioc(
@@ -244,7 +249,7 @@ class ThreatHunter:
     ) -> None:
         """Add an IoC to the collection."""
         key = f"{ioc_type}:{value}"
-        
+
         if key in self.iocs:
             # Update existing IoC
             existing = self.iocs[key]
@@ -264,14 +269,14 @@ class ThreatHunter:
 
     def scan_processes(self) -> ScanResult:
         """Scan running processes for malicious indicators.
-        
+
         Returns:
             ScanResult with findings
         """
         start_time = datetime.now()
-        findings = []
+        findings: List[Dict[str, Any]] = []
         total_scanned = 0
-        
+
         try:
             if self.platform == "linux":
                 processes = self._get_linux_processes()
@@ -281,42 +286,52 @@ class ThreatHunter:
                 processes = self._get_macos_processes()
             else:
                 processes = []
-            
+
             for proc in processes:
                 total_scanned += 1
-                
+
                 # Check process name
                 proc_name = proc.get("name", "").lower()
-                for suspicious_name, description in self.SUSPICIOUS_PROCESS_NAMES.items():
+                for (
+                    suspicious_name,
+                    description,
+                ) in self.SUSPICIOUS_PROCESS_NAMES.items():
                     if suspicious_name in proc_name:
-                        findings.append({
-                            "type": "suspicious_process",
-                            "process_name": proc.get("name"),
-                            "pid": proc.get("pid"),
-                            "description": description,
-                            "confidence": 0.8,
-                            "timestamp": datetime.now().isoformat(),
-                        })
+                        findings.append(
+                            {
+                                "type": "suspicious_process",
+                                "process_name": proc.get("name"),
+                                "pid": proc.get("pid"),
+                                "description": description,
+                                "confidence": 0.8,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        )
                         break
-                
+
                 # Check command line
                 cmdline = proc.get("cmdline", "").lower()
                 for ip, description in self.KNOWN_MALICIOUS_IPS.items():
                     if ip in cmdline:
-                        findings.append({
-                            "type": "malicious_ip_in_process",
-                            "process_name": proc.get("name"),
-                            "pid": proc.get("pid"),
-                            "ip": ip,
-                            "description": f"Process connecting to known malicious IP: {description}",
-                            "confidence": 0.9,
-                            "timestamp": datetime.now().isoformat(),
-                        })
+                        findings.append(
+                            {
+                                "type": "malicious_ip_in_process",
+                                "process_name": proc.get("name"),
+                                "pid": proc.get("pid"),
+                                "ip": ip,
+                                "description": (
+                                    f"Process connecting to known "
+                                    f"malicious IP: {description}"
+                                ),
+                                "confidence": 0.9,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        )
                         break
-            
+
         except Exception as e:
             logging.error(f"Error scanning processes: {e}")
-        
+
         end_time = datetime.now().isoformat()
         result = ScanResult(
             scan_type="processes",
@@ -326,101 +341,107 @@ class ThreatHunter:
             total_items_scanned=total_scanned,
             total_findings=len(findings),
         )
-        
+
         self.scan_history.append(result)
-        
+
         return result
 
     def _get_linux_processes(self) -> List[Dict[str, Any]]:
         """Get running processes on Linux."""
         processes = []
-        
+
         try:
             # Use ps command
-            result = subprocess.run(
+            result = subprocess.run(  # nosec
                 ["ps", "-eo", "pid,comm,cmd"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            
+
             lines = result.stdout.strip().split("\n")[1:]  # Skip header
             for line in lines:
                 parts = line.strip().split(None, 2)
                 if len(parts) >= 3:
-                    processes.append({
-                        "pid": parts[0],
-                        "name": parts[1],
-                        "cmdline": parts[2],
-                    })
+                    processes.append(
+                        {
+                            "pid": parts[0],
+                            "name": parts[1],
+                            "cmdline": parts[2],
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting Linux processes: {e}")
-        
+
         return processes
 
     def _get_windows_processes(self) -> List[Dict[str, Any]]:
         """Get running processes on Windows."""
         processes = []
-        
+
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec
                 ["wmic", "process", "get", "ProcessId,Name,CommandLine", "/format:csv"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            
+
             lines = result.stdout.strip().split("\n")[1:]  # Skip header
             for line in lines:
                 # Parse CSV line
                 parts = line.strip().split(",")
                 if len(parts) >= 3:
-                    processes.append({
-                        "pid": parts[0].strip('"'),
-                        "name": parts[1].strip('"'),
-                        "cmdline": parts[2].strip('"'),
-                    })
+                    processes.append(
+                        {
+                            "pid": parts[0].strip('"'),
+                            "name": parts[1].strip('"'),
+                            "cmdline": parts[2].strip('"'),
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting Windows processes: {e}")
-        
+
         return processes
 
     def _get_macos_processes(self) -> List[Dict[str, Any]]:
         """Get running processes on macOS."""
         processes = []
-        
+
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec
                 ["ps", "-eo", "pid,comm,args"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            
+
             lines = result.stdout.strip().split("\n")[1:]  # Skip header
             for line in lines:
                 parts = line.strip().split(None, 2)
                 if len(parts) >= 3:
-                    processes.append({
-                        "pid": parts[0],
-                        "name": parts[1],
-                        "cmdline": parts[2],
-                    })
+                    processes.append(
+                        {
+                            "pid": parts[0],
+                            "name": parts[1],
+                            "cmdline": parts[2],
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting macOS processes: {e}")
-        
+
         return processes
 
     def scan_network_connections(self) -> ScanResult:
         """Scan active network connections for suspicious activity.
-        
+
         Returns:
             ScanResult with findings
         """
         start_time = datetime.now()
-        findings = []
+        findings: List[Dict[str, Any]] = []
         total_scanned = 0
-        
+
         try:
             if self.platform == "linux":
                 connections = self._get_linux_connections()
@@ -430,45 +451,55 @@ class ThreatHunter:
                 connections = self._get_macos_connections()
             else:
                 connections = []
-            
+
             for conn in connections:
                 total_scanned += 1
-                
+
                 # Check for connections to known malicious IPs
                 remote_ip = conn.get("remote_ip", "")
                 if remote_ip in self.KNOWN_MALICIOUS_IPS:
-                    findings.append({
-                        "type": "malicious_connection",
-                        "local_ip": conn.get("local_ip"),
-                        "local_port": conn.get("local_port"),
-                        "remote_ip": remote_ip,
-                        "remote_port": conn.get("remote_port"),
-                        "protocol": conn.get("protocol"),
-                        "process": conn.get("process"),
-                        "description": f"Connection to known malicious IP: {self.KNOWN_MALICIOUS_IPS[remote_ip]}",
-                        "confidence": 0.95,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-                
+                    findings.append(
+                        {
+                            "type": "malicious_connection",
+                            "local_ip": conn.get("local_ip"),
+                            "local_port": conn.get("local_port"),
+                            "remote_ip": remote_ip,
+                            "remote_port": conn.get("remote_port"),
+                            "protocol": conn.get("protocol"),
+                            "process": conn.get("process"),
+                            "description": (
+                                "Connection to known malicious IP: "
+                                f"{self.KNOWN_MALICIOUS_IPS[remote_ip]}"
+                            ),
+                            "confidence": 0.95,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
                 # Check for connections to suspicious ports
                 remote_port = conn.get("remote_port", 0)
                 if remote_port in self.SUSPICIOUS_PORTS:
-                    findings.append({
-                        "type": "suspicious_port_connection",
-                        "local_ip": conn.get("local_ip"),
-                        "local_port": conn.get("local_port"),
-                        "remote_ip": remote_ip,
-                        "remote_port": remote_port,
-                        "protocol": conn.get("protocol"),
-                        "process": conn.get("process"),
-                        "description": f"Connection to suspicious port: {self.SUSPICIOUS_PORTS[remote_port]}",
-                        "confidence": 0.8,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-            
+                    findings.append(
+                        {
+                            "type": "suspicious_port_connection",
+                            "local_ip": conn.get("local_ip"),
+                            "local_port": conn.get("local_port"),
+                            "remote_ip": remote_ip,
+                            "remote_port": remote_port,
+                            "protocol": conn.get("protocol"),
+                            "process": conn.get("process"),
+                            "description": (
+                                "Connection to suspicious port: "
+                                f"{self.SUSPICIOUS_PORTS[remote_port]}"
+                            ),
+                            "confidence": 0.8,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
         except Exception as e:
             logging.error(f"Error scanning network connections: {e}")
-        
+
         end_time = datetime.now().isoformat()
         result = ScanResult(
             scan_type="network_connections",
@@ -478,32 +509,32 @@ class ThreatHunter:
             total_items_scanned=total_scanned,
             total_findings=len(findings),
         )
-        
+
         self.scan_history.append(result)
-        
+
         return result
 
     def _get_linux_connections(self) -> List[Dict[str, Any]]:
         """Get active network connections on Linux."""
         connections = []
-        
+
         try:
             # Use netstat or ss
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec
                     ["ss", "-tulnp"],
                     capture_output=True,
                     text=True,
                     check=True,
                 )
             except FileNotFoundError:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec
                     ["netstat", "-tulnp"],
                     capture_output=True,
                     text=True,
                     check=True,
                 )
-            
+
             lines = result.stdout.strip().split("\n")[1:]  # Skip header
             for line in lines:
                 # Parse ss/netstat output
@@ -511,117 +542,131 @@ class ThreatHunter:
                 if len(parts) >= 5:
                     local_addr = parts[4]
                     remote_addr = parts[5] if len(parts) > 5 else ""
-                    
+
                     # Parse local address
                     local_parts = local_addr.split(":")
                     local_ip = local_parts[0]
                     local_port = local_parts[1] if len(local_parts) > 1 else "0"
-                    
+
                     # Parse remote address
                     remote_parts = remote_addr.split(":")
                     remote_ip = remote_parts[0]
                     remote_port = remote_parts[1] if len(remote_parts) > 1 else "0"
-                    
-                    connections.append({
-                        "local_ip": local_ip,
-                        "local_port": local_port,
-                        "remote_ip": remote_ip,
-                        "remote_port": remote_port,
-                        "protocol": parts[0],
-                        "state": parts[1],
-                        "process": parts[6] if len(parts) > 6 else "",
-                    })
+
+                    connections.append(
+                        {
+                            "local_ip": local_ip,
+                            "local_port": local_port,
+                            "remote_ip": remote_ip,
+                            "remote_port": remote_port,
+                            "protocol": parts[0],
+                            "state": parts[1],
+                            "process": parts[6] if len(parts) > 6 else "",
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting Linux connections: {e}")
-        
+
         return connections
 
     def _get_windows_connections(self) -> List[Dict[str, Any]]:
         """Get active network connections on Windows."""
         connections = []
-        
+
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec
                 ["netstat", "-ano"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            
+
             lines = result.stdout.strip().split("\n")[3:]  # Skip headers
             for line in lines:
                 parts = line.split()
                 if len(parts) >= 5:
                     local_addr = parts[1]
                     remote_addr = parts[2]
-                    
+
                     # Parse addresses
                     local_parts = local_addr.split(":")
                     local_ip = local_parts[0]
                     local_port = local_parts[1] if len(local_parts) > 1 else "0"
-                    
+
                     remote_parts = remote_addr.split(":")
                     remote_ip = remote_parts[0]
                     remote_port = remote_parts[1] if len(remote_parts) > 1 else "0"
-                    
-                    connections.append({
-                        "local_ip": local_ip,
-                        "local_port": local_port,
-                        "remote_ip": remote_ip,
-                        "remote_port": remote_port,
-                        "protocol": parts[0],
-                        "state": parts[3],
-                        "pid": parts[4],
-                        "process": "",
-                    })
+
+                    connections.append(
+                        {
+                            "local_ip": local_ip,
+                            "local_port": local_port,
+                            "remote_ip": remote_ip,
+                            "remote_port": remote_port,
+                            "protocol": parts[0],
+                            "state": parts[3],
+                            "pid": parts[4],
+                            "process": "",
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting Windows connections: {e}")
-        
+
         return connections
 
     def _get_macos_connections(self) -> List[Dict[str, Any]]:
         """Get active network connections on macOS."""
         connections = []
-        
+
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec
                 ["lsof", "-i", "-n", "-P"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            
+
             lines = result.stdout.strip().split("\n")[1:]  # Skip header
             for line in lines:
                 parts = line.split()
                 if len(parts) >= 9:
-                    connections.append({
-                        "local_ip": parts[8].split(":")[0],
-                        "local_port": parts[8].split(":")[1] if ":" in parts[8] else "0",
-                        "remote_ip": parts[9].split(":")[0] if len(parts) > 9 else "",
-                        "remote_port": parts[9].split(":")[1] if len(parts) > 9 and ":" in parts[9] else "0",
-                        "protocol": parts[7],
-                        "state": "",
-                        "process": parts[0],
-                    })
+                    connections.append(
+                        {
+                            "local_ip": parts[8].split(":")[0],
+                            "local_port": (
+                                parts[8].split(":")[1] if ":" in parts[8] else "0"
+                            ),
+                            "remote_ip": (
+                                parts[9].split(":")[0] if len(parts) > 9 else ""
+                            ),
+                            "remote_port": (
+                                parts[9].split(":")[1]
+                                if len(parts) > 9 and ":" in parts[9]
+                                else "0"
+                            ),
+                            "protocol": parts[7],
+                            "state": "",
+                            "process": parts[0],
+                        }
+                    )
         except Exception as e:
             logging.error(f"Error getting macOS connections: {e}")
-        
+
         return connections
 
     def scan_filesystem(self, paths: List[str]) -> ScanResult:
         """Scan files for known malware hashes.
-        
+
         Args:
             paths: List of paths to scan
-            
+
         Returns:
             ScanResult with findings
         """
         start_time = datetime.now()
-        findings = []
+        findings: List[Dict[str, Any]] = []
         total_scanned = 0
-        
+
         for path in paths:
             try:
                 path_obj = Path(path)
@@ -636,7 +681,7 @@ class ThreatHunter:
                     self._scan_file(path_obj, findings)
             except Exception as e:
                 logging.error(f"Error scanning path {path}: {e}")
-        
+
         end_time = datetime.now().isoformat()
         result = ScanResult(
             scan_type="filesystem",
@@ -646,9 +691,9 @@ class ThreatHunter:
             total_items_scanned=total_scanned,
             total_findings=len(findings),
         )
-        
+
         self.scan_history.append(result)
-        
+
         return result
 
     def _scan_file(self, file_path: Path, findings: List[Dict[str, Any]]) -> None:
@@ -658,70 +703,83 @@ class ThreatHunter:
             md5 = self._calculate_md5(file_path)
             sha1 = self._calculate_sha1(file_path)
             sha256 = self._calculate_sha256(file_path)
-            
+
             # Check against known malware hashes
             if md5 in self.KNOWN_MALWARE_HASHES.get("md5", {}):
-                findings.append({
-                    "type": "malware_hash_match",
-                    "file_path": str(file_path),
-                    "hash_type": "md5",
-                    "hash_value": md5,
-                    "description": self.KNOWN_MALWARE_HASHES["md5"][md5],
-                    "confidence": 1.0,
-                    "timestamp": datetime.now().isoformat(),
-                })
-            
+                findings.append(
+                    {
+                        "type": "malware_hash_match",
+                        "file_path": str(file_path),
+                        "hash_type": "md5",
+                        "hash_value": md5,
+                        "description": self.KNOWN_MALWARE_HASHES["md5"][md5],
+                        "confidence": 1.0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+
             if sha1 in self.KNOWN_MALWARE_HASHES.get("sha1", {}):
-                findings.append({
-                    "type": "malware_hash_match",
-                    "file_path": str(file_path),
-                    "hash_type": "sha1",
-                    "hash_value": sha1,
-                    "description": self.KNOWN_MALWARE_HASHES["sha1"][sha1],
-                    "confidence": 1.0,
-                    "timestamp": datetime.now().isoformat(),
-                })
-            
+                findings.append(
+                    {
+                        "type": "malware_hash_match",
+                        "file_path": str(file_path),
+                        "hash_type": "sha1",
+                        "hash_value": sha1,
+                        "description": self.KNOWN_MALWARE_HASHES["sha1"][sha1],
+                        "confidence": 1.0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+
             if sha256 in self.KNOWN_MALWARE_HASHES.get("sha256", {}):
-                findings.append({
-                    "type": "malware_hash_match",
-                    "file_path": str(file_path),
-                    "hash_type": "sha256",
-                    "hash_value": sha256,
-                    "description": self.KNOWN_MALWARE_HASHES["sha256"][sha256],
-                    "confidence": 1.0,
-                    "timestamp": datetime.now().isoformat(),
-                })
-            
+                findings.append(
+                    {
+                        "type": "malware_hash_match",
+                        "file_path": str(file_path),
+                        "hash_type": "sha256",
+                        "hash_value": sha256,
+                        "description": self.KNOWN_MALWARE_HASHES["sha256"][sha256],
+                        "confidence": 1.0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+
             # Check filename against suspicious patterns
             filename = file_path.name.lower()
             for pattern, description in self.SUSPICIOUS_PROCESS_NAMES.items():
                 if pattern in filename:
-                    findings.append({
-                        "type": "suspicious_filename",
-                        "file_path": str(file_path),
-                        "filename": filename,
-                        "pattern": pattern,
-                        "description": f"File with suspicious name: {description}",
-                        "confidence": 0.7,
-                        "timestamp": datetime.now().isoformat(),
-                    })
+                    findings.append(
+                        {
+                            "type": "suspicious_filename",
+                            "file_path": str(file_path),
+                            "filename": filename,
+                            "pattern": pattern,
+                            "description": f"File with suspicious name: {description}",
+                            "confidence": 0.7,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
                     break
-            
+
         except Exception as e:
             logging.error(f"Error scanning file {file_path}: {e}")
 
     def _calculate_md5(self, file_path: Path) -> str:
-        """Calculate MD5 hash of a file."""
-        hash_md5 = hashlib.md5()
+        """Calculate MD5 hash of a file.
+
+        Used only to match against known-malware-hash IoC feeds, which
+        still publish MD5/SHA1 for legacy compatibility - not used for
+        any security/integrity purpose, hence usedforsecurity=False.
+        """
+        hash_md5 = hashlib.md5(usedforsecurity=False)
         with file_path.open("rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
     def _calculate_sha1(self, file_path: Path) -> str:
-        """Calculate SHA1 hash of a file."""
-        hash_sha1 = hashlib.sha1()
+        """Calculate SHA1 hash of a file (IoC matching only, see _calculate_md5)."""
+        hash_sha1 = hashlib.sha1(usedforsecurity=False)
         with file_path.open("rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_sha1.update(chunk)
@@ -737,11 +795,11 @@ class ThreatHunter:
 
     def check_ioc(self, ioc_type: str, value: str) -> Tuple[bool, Optional[IoC]]:
         """Check if a value matches any known IoC.
-        
+
         Args:
             ioc_type: Type of IoC to check
             value: Value to check
-            
+
         Returns:
             Tuple of (is_match, ioc) where ioc is the matching IoC or None
         """
@@ -759,7 +817,7 @@ class ThreatHunter:
         source: str,
     ) -> None:
         """Add a new IoC to the collection.
-        
+
         Args:
             ioc_type: Type of IoC
             value: IoC value
@@ -771,7 +829,7 @@ class ThreatHunter:
 
     def get_iocs(self) -> List[Dict[str, Any]]:
         """Get all IoCs.
-        
+
         Returns:
             List of all IoCs as dictionaries
         """
@@ -779,10 +837,10 @@ class ThreatHunter:
 
     def get_scan_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent scan history.
-        
+
         Args:
             limit: Maximum number of scans to return
-            
+
         Returns:
             List of scan results
         """
@@ -790,7 +848,7 @@ class ThreatHunter:
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get statistics about threat hunting.
-        
+
         Returns:
             Dictionary with hunting statistics
         """
@@ -805,35 +863,43 @@ class ThreatHunter:
 
     def run_continuous_hunting(self, stop_event: threading.Event) -> None:
         """Run continuous threat hunting until stopped.
-        
+
         Args:
             stop_event: Event to signal when to stop
         """
         logging.info("Starting continuous threat hunting")
-        
+
         while not stop_event.is_set():
             start_time = time.time()
-            
+
             # Run all scans
             self.scan_processes()
             self.scan_network_connections()
-            
-            # Scan common directories
-            common_paths = ["/tmp", "/var/tmp", "/home", "/opt"]
+
+            # Scan common directories. These are scan targets, not a
+            # location this process writes to, so bandit's B108
+            # hardcoded_tmp_directory (which flags insecure temp-file
+            # creation) doesn't apply here.
+            common_paths = [
+                "/tmp",  # nosec B108
+                "/var/tmp",  # nosec B108
+                "/home",
+                "/opt",
+            ]
             if self.platform == "windows":
                 common_paths = ["C:\\Windows\\Temp", "C:\\Users"]
             elif self.platform == "darwin":
-                common_paths = ["/tmp", "/var/tmp", "/Users"]
-            
+                common_paths = ["/tmp", "/var/tmp", "/Users"]  # nosec B108
+
             for path in common_paths:
                 if Path(path).exists():
                     self.scan_filesystem([path])
-            
+
             # Sleep for remaining interval
             elapsed = time.time() - start_time
             sleep_time = max(0, self.scan_interval - elapsed)
             stop_event.wait(sleep_time)
-        
+
         logging.info("Stopped continuous threat hunting")
 
     def reset(self) -> None:
