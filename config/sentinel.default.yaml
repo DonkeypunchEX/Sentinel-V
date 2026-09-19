@@ -32,6 +32,15 @@ active_defense_auto_isolate: false  # Isolate compromised hosts
 active_defense_auto_rate_limit: true
 active_defense_block_duration: null  # null = permanent, or seconds (e.g., 3600)
 
+# CRITICAL: Allowlist IPs/networks that should NEVER be blocked
+# Add your gateway, DNS servers, and other essential infrastructure here
+# Format: list of IPs or CIDR ranges (e.g., ["192.168.1.1", "10.0.0.0/24"])
+active_defense_allowlist: []
+
+# Persistence file for active defense state (blocks survive restarts)
+# Default: <state_dir>/active_defense_state.json
+active_defense_persistent_state: null
+
 # Forensic Capture (payload and session logging)
 # WARNING: May capture sensitive data - ensure compliance with privacy laws
 forensics_enabled: false

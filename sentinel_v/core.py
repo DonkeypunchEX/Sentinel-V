@@ -128,12 +128,16 @@ class SentinelVSystem:
 
         # Active Defense capabilities
         self.active_defense_enabled = self.config.get("active_defense_enabled", False)
+        allowlist = self.config.get("active_defense_allowlist", [])
+        persistent_state = self.config.get("active_defense_persistent_state")
         self.active_defense = ActiveDefenseEngine(
             enforce_mode=self.config.get("active_defense_enforce", False),
             auto_block=self.config.get("active_defense_auto_block", True),
             auto_isolate=self.config.get("active_defense_auto_isolate", False),
             auto_rate_limit=self.config.get("active_defense_auto_rate_limit", True),
             block_duration=self.config.get("active_defense_block_duration"),
+            allowlist=set(allowlist) if allowlist else None,
+            persistent_state_file=persistent_state,
         )
 
         # Forensic capture
